@@ -5,32 +5,44 @@ Set/Get nodes: relate two nodes by name instead of by a visible pipe.
 
 A **Set** is a MUX node named `SET_<channel>` fed by the real upstream. A
 **Get** is a MUX node named `GET_<channel>` whose input is connected by the
-script to the matching Set's output, then hidden so no noodle crosses the
-schematic. Because the connection is real, Flame's render and dependency graph
-stay correct — the hiding is purely cosmetic.
+script to the matching Set's output, then hidden (`node.hide_input`) so no
+noodle crosses the schematic. Because the connection is real, Flame's render
+and dependency graph stay correct — the hiding is purely cosmetic.
+
+## Colours
+
+Every channel gets a colour from the FORGE palette (12 hues, ember first).
+The Set node carries the full colour; every Get is painted a lighter tint of
+the same hue, so you can read the routing at a glance. The colour lives on the
+Set node itself (`schematic_colour`, saved with the setup) — no external
+state, so colours survive save/reload.
 
 ## Install
 
-Drop `forge_getset.py` in a Flame python hooks path, e.g.
+Drop `forge_wireless.py` in a Flame python hooks path, e.g.
 
 - `/opt/Autodesk/shared/python/` (site-wide)
 - `~/.autodesk/<product>/.../python/` (per-user)
 
-then refresh python hooks in Flame. A "Wireless Get/Set" submenu appears on
+then refresh python hooks in Flame. A **FORGE Wireless** submenu appears on
 right-click in the Batch schematic.
 
 ## Usage
 
-1. Select a node, right-click → Wireless Get/Set → **Make Set from selected**.
-   Rename the created MUX's suffix to your channel (e.g. `SET_bg`).
-2. Anywhere, **Make Get** and rename its suffix to match (`GET_bg`).
-3. **Relink all** wires every Get to its Set and hides the pipes. This also
-   runs automatically when a batch setup is loaded.
+1. Select a node, right-click → FORGE Wireless → **Make Set from selected…**
+   Name the channel and pick its colour in the dialog (the next free palette
+   colour is pre-selected).
+2. Anywhere, **Make Get…** — pick the channel from the list (colour chips,
+   double-click works). The Get is created pre-linked, tinted, and hidden.
+3. **Relink all** re-wires every Get to its Set, reasserts colours, and hides
+   the pipes. It also runs automatically whenever a batch setup is loaded.
+4. **Rename channel…** with a `SET_`/`GET_` node selected renames the channel
+   across all of its nodes.
 
-## Per-site verification
+## Compatibility
 
-The exact attribute that hides a MUX input link varies by Flame version. Run
-**Inspect selected node** from the menu on a MUX to confirm/adjust
-`HIDE_ATTR_CANDIDATES` in `forge_getset.py`. If none works, the
-connect-by-name still happens — you just flip the MUX "Input" toggle by hand
-once per Get (it persists in the saved setup).
+Verified against Flame 2026.2 (PySide6): `node.type` reads `"MUX"`,
+`hide_input` / `schematic_colour` are the real dynamic attributes (note that
+`hasattr()` is useless on PyNode — it resolves any name; the true list is
+`node.attributes`), and `connect_nodes(src, "Default", dst, "Default")` lands
+on `Input_0`.
