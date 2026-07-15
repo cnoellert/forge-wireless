@@ -3,11 +3,13 @@
 Wireless "Get / Set" nodes for Autodesk Flame Batch, in the spirit of ComfyUI's
 Set/Get nodes: relate two nodes by name instead of by a visible pipe.
 
-A **Set** is a MUX node named `SET_<channel>` fed by the real upstream. A
-**Get** is a MUX node named `GET_<channel>` whose input is connected by the
-script to the matching Set's output, then hidden (`node.hide_input`) so no
-noodle crosses the schematic. Because the connection is real, Flame's render
-and dependency graph stay correct — the hiding is purely cosmetic.
+A **Set** is a MUX node named `SET_<channel>` fed by the real upstream — RGB
+into `Input_0`, and the upstream's matte/alpha output (when it has one) into
+`Matte_0`, so alpha rides the channel too. A **Get** is a MUX node named
+`GET_<channel>` whose inputs are connected by the script to the matching
+Set's `Result` and `OutMatte`, then hidden (`node.hide_input`) so no noodle
+crosses the schematic. Because the connections are real, Flame's render and
+dependency graph stay correct — the hiding is purely cosmetic.
 
 ## Colours
 

@@ -4,10 +4,13 @@
 # ComfyUI's Set/Get nodes: relate two nodes by NAME instead of a visible pipe.
 #
 # How it works
-#   * A "Set" is a MUX node named  SET_<channel>  fed by the real upstream.
-#   * A "Get" is a MUX node named  GET_<channel>  whose input is connected
-#     (by this script) to the matching Set's output -- then the input link is
-#     hidden (node.hide_input) so no noodle crosses the schematic.
+#   * A "Set" is a MUX node named  SET_<channel>  fed by the real upstream --
+#     RGB into Input_0 and, when the upstream exposes a matte/alpha output,
+#     that into Matte_0 as well.
+#   * A "Get" is a MUX node named  GET_<channel>  whose inputs are connected
+#     (by this script) to the matching Set's Result AND OutMatte -- then the
+#     input links are hidden (node.hide_input) so no noodle crosses the
+#     schematic.
 #
 # Why MUX + hidden link (and not a data side-channel):
 #   connect_nodes() makes a REAL connection, so Flame's render and dependency
@@ -110,6 +113,23 @@ def _muxes_by_channel(prefix):
             out.setdefault(nm[len(prefix):], []).append(n)
     return out
 
+def _source_outputs(node):
+    """(rgb_socket, matte_socket_or_None) for an arbitrary upstream node.
+
+    Output socket names vary by type (Result/OutMatte on most, custom labels
+    like 'output1 [ Comp ]' on Action, Result-only on Colour Source); pick a
+    matte-ish socket by name and treat the first non-matte socket as RGB.
+    """
+    try:
+        outs = list(dict(node.sockets)["output"].keys())
+    except Exception:
+        outs = []
+    matte = next((s for s in outs
+                  if "matte" in s.lower() or "alpha" in s.lower()), None)
+    rgb = next((s for s in outs if s != matte), None) or "Default"
+    return rgb, matte
+
+
 def _set_colour(node):
     """A Set node's channel colour, or None if never assigned."""
     try:
@@ -141,7 +161,11 @@ def _next_palette_index():
 # --- core actions (GUI-free; the dialogs below call these) ------------------
 
 def create_set(source_node, channel, colour):
-    """Create SET_<channel> downstream of source_node, coloured and wired."""
+    """Create SET_<channel> downstream of source_node, coloured and wired.
+
+    RGB goes to the Set's Input_0; if the source exposes a matte/alpha
+    output socket, it is wired to Matte_0 so alpha rides the channel too.
+    """
     m = flame.batch.create_node(MUX_CREATE)
     m.name = SET_PREFIX + channel
     m.schematic_colour = colour
@@ -150,7 +174,10 @@ def create_set(source_node, channel, colour):
         m.pos_y = source_node.pos_y
     except Exception:
         pass
-    flame.batch.connect_nodes(source_node, "Default", m, "Default")
+    rgb, matte = _source_outputs(source_node)
+    flame.batch.connect_nodes(source_node, rgb, m, "Input_0")
+    if matte:
+        flame.batch.connect_nodes(source_node, matte, m, "Matte_0")
     return m
 
 def create_get(channel, near_node=None):
@@ -184,7 +211,8 @@ def _link_gets(get_map, set_map=None):
             src.schematic_colour = colour
         tint = _lighten(colour)
         for g in gets:
-            flame.batch.connect_nodes(src, "Default", g, "Default")
+            flame.batch.connect_nodes(src, "Result", g, "Input_0")
+            flame.batch.connect_nodes(src, "OutMatte", g, "Matte_0")
             g.schematic_colour = tint
             linked += 1
             try:
