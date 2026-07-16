@@ -11,7 +11,7 @@
 #     (by this script) to the matching Set's Result AND OutMatte -- then the
 #     input links are hidden (node.hide_input) so no noodle crosses the
 #     schematic. Flame node names are unique, so additional Gets on the same
-#     channel are numbered:  GET_<channel>__2, GET_<channel>__3, ...
+#     channel are numbered in the prefix:  GET2_<channel>, GET3_<channel>, ...
 #
 # Why MUX + hidden link (and not a data side-channel):
 #   connect_nodes() makes a REAL connection, so Flame's render and dependency
@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -89,8 +89,8 @@ def _sanitize(channel):
     """Channel charset: [A-Za-z0-9_], no consecutive underscores.
 
     Flame silently coerces other characters (incl. '-') to '_' in node
-    names, so anything looser breaks the name mapping. Single underscores
-    only, because '__<digits>' is reserved as the Get numbering suffix.
+    names, so anything looser breaks the name mapping. Collapsing runs of
+    underscores keeps coerced names (e.g. 'a - b') readable.
     """
     channel = re.sub(r"[^A-Za-z0-9]+", "_", channel.strip())
     return re.sub(r"_+", "_", channel).strip("_")
@@ -122,35 +122,41 @@ def _muxes_by_channel(prefix):
             out.setdefault(nm[len(prefix):], []).append(n)
     return out
 
-def _gets_by_channel():
-    """channel -> [nodes] for every GET_ MUX, resolving numbered suffixes.
+GET_RE = re.compile(r"^GET(\d*)_(.+)$")   # GET_bg, GET2_bg, GET3_bg, ...
 
-    Flame node names are unique, so multiple Gets on one channel are named
-    GET_<channel>, GET_<channel>__2, GET_<channel>__3, ... The '__<digits>'
-    suffix is unambiguous because sanitized channel names never contain
-    consecutive underscores.
+def _get_channel_of(name):
+    """Channel encoded in a Get node name, or None if not a Get name.
+
+    Flame node names are unique, so multiple Gets on one channel carry a
+    number in the PREFIX (GET2_bg = second Get of channel 'bg'), keeping the
+    channel string pristine. Legacy v0.4 names (GET_bg__2) still resolve so
+    existing setups migrate on their first relink.
     """
+    m = GET_RE.match(name)
+    if not m or not m.group(2):
+        return None
+    return re.sub(r"__\d+$", "", m.group(2))
+
+def _gets_by_channel():
+    """channel -> [nodes] for every Get MUX in the batch."""
     out = {}
     for n in flame.batch.nodes:
         if not _is_mux(n):
             continue
-        nm = _node_name(n)
-        if not (nm.startswith(GET_PREFIX) and len(nm) > len(GET_PREFIX)):
-            continue
-        chan = re.sub(r"__\d+$", "", nm[len(GET_PREFIX):])
-        out.setdefault(chan, []).append(n)
+        chan = _get_channel_of(_node_name(n))
+        if chan:
+            out.setdefault(chan, []).append(n)
     return out
 
 def _free_get_name(channel):
     """First unused Get node name for a channel (names are unique in Flame)."""
     taken = {_node_name(n) for n in flame.batch.nodes}
-    base = GET_PREFIX + channel
-    if base not in taken:
-        return base
+    if GET_PREFIX + channel not in taken:
+        return GET_PREFIX + channel
     i = 2
-    while "{0}__{1}".format(base, i) in taken:
+    while "GET{0}_{1}".format(i, channel) in taken:
         i += 1
-    return "{0}__{1}".format(base, i)
+    return "GET{0}_{1}".format(i, channel)
 
 def _source_outputs(node):
     """(rgb_socket, matte_socket_or_None) for an arbitrary upstream node.
@@ -527,19 +533,18 @@ def rename_channel_dialog(selection):
     node = None
     for n in (selection or []):
         nm = _node_name(n)
-        if _is_mux(n) and (nm.startswith(SET_PREFIX) or nm.startswith(GET_PREFIX)):
+        if _is_mux(n) and (nm.startswith(SET_PREFIX) or _get_channel_of(nm)):
             node = n
             break
     if node is None:
         _console("Rename channel: select a SET_ or GET_ node first.")
         return
     nm = _node_name(node)
-    old = nm[len(SET_PREFIX):] if nm.startswith(SET_PREFIX) else nm[len(GET_PREFIX):]
-    # numbered Gets (GET_<channel>__2, ...) carry the numbering suffix in the
-    # node name -- strip it or the rename targets a channel that doesn't exist
-    old = re.sub(r"__\d+$", "", old)
-    _console("Rename v{0}: node '{1}' -> channel '{2}'"
-             .format(__version__, nm, old))
+    if nm.startswith(SET_PREFIX):
+        old = nm[len(SET_PREFIX):]
+    else:
+        old = _get_channel_of(nm)
+    _console("Rename: node '{0}' -> channel '{1}'".format(nm, old))
 
     QtCore, QtGui, QtWidgets = _qt()
 
@@ -623,11 +628,9 @@ def _safe(fn):
     return wrapped
 
 def get_batch_custom_ui_actions():
-    # version in the title doubles as a live check that Flame's hook rescan
-    # actually picked up the deployed file
     return [
         {
-            "name": "FORGE Wireless v" + __version__,
+            "name": "FORGE Wireless",
             "actions": [
                 {"name": "Make Set from selected...", "execute": _safe(make_set_dialog)},
                 {"name": "Make Get...",               "execute": _safe(make_get_dialog)},

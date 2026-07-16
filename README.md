@@ -11,12 +11,12 @@ Set's `Result` and `OutMatte`, then hidden (`node.hide_input`) so no noodle
 crosses the schematic. Because the connections are real, Flame's render and
 dependency graph stay correct — the hiding is purely cosmetic.
 
-Flame enforces unique node names, so additional Gets on one channel are
-numbered `GET_<channel>__2`, `GET_<channel>__3`, … The double-underscore
-suffix is unambiguous because channel names are sanitized to `[A-Za-z0-9_]`
-with no consecutive underscores (Flame silently coerces other characters to
-`_` anyway). Errors in any menu action are reported to the Flame console —
-the hook system otherwise swallows exceptions silently.
+Flame enforces unique node names, so additional Gets on one channel carry a
+number in the prefix: `GET_bg`, `GET2_bg`, `GET3_bg`, … — the channel string
+stays pristine and can't be confused with channels that end in digits.
+Channel names are sanitized to `[A-Za-z0-9_]` (Flame silently coerces other
+characters to `_` anyway). Errors in any menu action are reported to the
+Flame console — the hook system otherwise swallows exceptions silently.
 
 ## Colours
 
