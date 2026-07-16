@@ -514,6 +514,9 @@ def rename_channel_dialog(selection):
         return
     nm = _node_name(node)
     old = nm[len(SET_PREFIX):] if nm.startswith(SET_PREFIX) else nm[len(GET_PREFIX):]
+    # numbered Gets (GET_<channel>__2, ...) carry the numbering suffix in the
+    # node name -- strip it or the rename targets a channel that doesn't exist
+    old = re.sub(r"__\d+$", "", old)
 
     QtCore, QtGui, QtWidgets = _qt()
 
@@ -569,7 +572,11 @@ def rename_channel_dialog(selection):
     if not new or new == old or new in existing:
         return
     count = rename_channel(old, new)
-    _console("Renamed '{0}' -> '{1}' across {2} node(s).".format(old, new, count))
+    if count == 0:
+        _console("Rename did NOTHING: no nodes found for channel '{0}'."
+                 .format(old))
+    else:
+        _console("Renamed '{0}' -> '{1}' across {2} node(s).".format(old, new, count))
 
 
 # --- Flame hooks -----------------------------------------------------------
