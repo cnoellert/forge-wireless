@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.7.4"
+__version__ = "0.7.5"
 
 # --- configuration ---------------------------------------------------------
 
@@ -225,6 +225,28 @@ def _expand_compasses(selection):
                 nodes.append(m)
     return nodes
 
+def _group_members(group):
+    """Names of a Group's hidden member nodes.
+
+    The API exposes no membership (.nodes raises on Groups), but selecting
+    a Group also selects its members -- verified live. Isolate the group in
+    the selection, read who came along, then restore the prior selection.
+    """
+    try:
+        before = [n for n in flame.batch.nodes if _val(n.selected)]
+        for n in before:
+            n.selected = False
+        group.selected = True
+        members = {_node_name(n) for n in flame.batch.nodes
+                   if _val(n.selected)} - {_node_name(group)}
+        group.selected = False
+        for n in before:
+            n.selected = True
+        return members
+    except Exception:
+        return set()
+
+
 def _expand_selection(selection):
     """Flatten a selection into Set proposals:
     [{node, rgb, matte, channel}, ...]
@@ -238,9 +260,19 @@ def _expand_selection(selection):
     Wireless SET_/GET nodes and nodes without outputs are skipped.
     """
     rows = []
-    for node in _expand_compasses(selection):
+    nodes = _expand_compasses(selection)
+    # selecting a collapsed Group silently selects its hidden members too --
+    # drop them from the selection: the group's published contract is the
+    # interface, and member Sets would land at invisible internal coords
+    hidden = set()
+    for n in nodes:
+        if str(_val(n.type)).upper() == "GROUP":
+            hidden |= _group_members(n)
+    for node in nodes:
         t = str(_val(node.type)).upper()
         nm = _node_name(node)
+        if t != "GROUP" and nm in hidden:
+            continue
         if t == MUX_TYPE and (nm.startswith(SET_PREFIX) or _get_channel_of(nm)):
             continue
         try:
