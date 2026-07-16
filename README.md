@@ -57,8 +57,11 @@ right-click in the Batch schematic.
      coloured but unwired — connect it by hand once (the console says
      which) and Relink preserves it.
    - **Compass** → expands to its member nodes
-2. Anywhere, **Make Get…** — pick the channel from the list (colour chips,
-   double-click works). The Get is created pre-linked, tinted, and hidden.
+2. Anywhere, **Make Get…** — channels are grouped under the node that feeds
+   their Set (read live from the connection, no stored metadata) with a
+   type-to-filter box matching channel or source names; colour chips,
+   double-click works. The Get lands at the spot where you right-clicked,
+   pre-linked, tinted, and hidden.
 3. **Relink all** re-wires every Get to its Set, reasserts colours, and hides
    the pipes. It also runs automatically whenever a batch setup is loaded.
 4. **Rename channel…** with a `SET_`/`GET_` node selected renames the channel

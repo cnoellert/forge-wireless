@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -299,6 +299,19 @@ def _group_output_owner(group, sock):
     return None
 
 
+def _set_source_name(set_node):
+    """Name of the node feeding a Set, read live from its input connection.
+    None for unwired Sets. The graph is the database: this survives node
+    renames, rewires and setup reloads with no stored metadata."""
+    try:
+        for dests in dict(set_node.sockets)["input"].values():
+            if dests:
+                return str(dests[0])
+    except Exception:
+        pass
+    return None
+
+
 def _set_colour(node):
     """A Set node's channel colour, or None if never assigned."""
     try:
@@ -511,6 +524,10 @@ FORGE_SS = (
     "  font-size: 12px; }"
     "QListWidget::item { padding: 5px 6px; }"
     "QListWidget::item:selected { background: #2d4f7a; color: #fff; }"
+    "QTreeWidget { background: #1e2028; color: #ccc; border: none; "
+    "  font-size: 12px; }"
+    "QTreeWidget::item { padding: 4px 6px; }"
+    "QTreeWidget::item:selected { background: #2d4f7a; color: #fff; }"
     "QTableWidget { background: #1e2028; color: #ccc; border: none; "
     "  font-size: 11px; gridline-color: #2e3240; }"
     "QTableWidget::item { padding: 2px 6px; }"
@@ -753,28 +770,72 @@ def make_get_dialog(selection):
 
     dlg = QtWidgets.QDialog()
     dlg.setWindowTitle("FORGE — Wireless Get")
-    dlg.setMinimumSize(360, 320)
+    dlg.setMinimumSize(420, 440)
     dlg.setStyleSheet(FORGE_SS)
     lay = QtWidgets.QVBoxLayout(dlg)
     lay.setContentsMargins(16, 14, 16, 14)
     lay.setSpacing(10)
 
     lay.addWidget(_header(QtWidgets, "Create Get"))
-    lay.addWidget(_hint(QtWidgets, "Channel to receive:"))
 
-    lst = QtWidgets.QListWidget()
-    for chan in sorted(set_map):
-        colour = _set_colour(set_map[chan][0])
-        n_gets = len(get_map.get(chan, []))
-        item = QtWidgets.QListWidgetItem(
-            "{0}   ({1} get{2})".format(chan, n_gets, "" if n_gets == 1 else "s"))
-        if colour:
-            item.setIcon(_swatch_icon(QtGui, colour))
-        item.setData(QtCore.Qt.UserRole, chan)
-        lst.addItem(item)
-    lst.setCurrentRow(0)
-    lst.itemDoubleClicked.connect(lambda _item: dlg.accept())
-    lay.addWidget(lst, 1)
+    filt = QtWidgets.QLineEdit()
+    filt.setPlaceholderText("filter by channel or source node...")
+    lay.addWidget(filt)
+
+    # channels grouped under the node that feeds their Set (read live from
+    # the Set's input connection -- no stored metadata)
+    groups = {}
+    for chan in set_map:
+        src = _set_source_name(set_map[chan][0]) or "(unwired)"
+        groups.setdefault(src, []).append(chan)
+
+    tree = QtWidgets.QTreeWidget()
+    tree.setHeaderHidden(True)
+    first_chan_item = [None]
+    for src in sorted(groups, key=str.lower):
+        top = QtWidgets.QTreeWidgetItem(["{0}   ({1})".format(src, len(groups[src]))])
+        top.setFlags(QtCore.Qt.ItemIsEnabled)
+        top.setForeground(0, QtGui.QBrush(QtGui.QColor("#888")))
+        for chan in sorted(groups[src], key=str.lower):
+            n_gets = len(get_map.get(chan, []))
+            item = QtWidgets.QTreeWidgetItem([
+                "{0}   ({1} get{2})".format(chan, n_gets,
+                                            "" if n_gets == 1 else "s")])
+            colour = _set_colour(set_map[chan][0])
+            if colour:
+                item.setIcon(0, _swatch_icon(QtGui, colour))
+            item.setData(0, QtCore.Qt.UserRole, chan)
+            top.addChild(item)
+            if first_chan_item[0] is None:
+                first_chan_item[0] = item
+        tree.addTopLevelItem(top)
+    tree.expandAll()
+    if first_chan_item[0] is not None:
+        tree.setCurrentItem(first_chan_item[0])
+    tree.itemDoubleClicked.connect(
+        lambda item, col: item.data(0, QtCore.Qt.UserRole) and dlg.accept())
+    lay.addWidget(tree, 1)
+
+    def _apply_filter(text):
+        text = text.strip().lower()
+        first = None
+        for i in range(tree.topLevelItemCount()):
+            top = tree.topLevelItem(i)
+            src_match = text in top.text(0).lower()
+            visible = 0
+            for j in range(top.childCount()):
+                ch = top.child(j)
+                show = (not text) or src_match or text in ch.text(0).lower()
+                ch.setHidden(not show)
+                if show:
+                    visible += 1
+                    if first is None:
+                        first = ch
+            top.setHidden(visible == 0)
+        if first is not None:
+            tree.setCurrentItem(first)
+
+    filt.textChanged.connect(_apply_filter)
 
     btns = QtWidgets.QHBoxLayout()
     btns.addStretch()
@@ -791,9 +852,11 @@ def make_get_dialog(selection):
     btns.addWidget(ok)
     lay.addLayout(btns)
 
-    if dlg.exec() != QtWidgets.QDialog.Accepted or lst.currentItem() is None:
+    if dlg.exec() != QtWidgets.QDialog.Accepted or tree.currentItem() is None:
         return
-    chan = lst.currentItem().data(QtCore.Qt.UserRole)
+    chan = tree.currentItem().data(0, QtCore.Qt.UserRole)
+    if not chan:
+        return
     near = selection[0] if selection else None
     create_get(chan, near_node=near, at=click_pos)
     _console("Get '{0}' created, linked and hidden.".format(chan))
