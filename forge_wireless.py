@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 
 # --- configuration ---------------------------------------------------------
 
@@ -772,12 +772,15 @@ def _multi_set_dialog(rows):
 
     lay.addWidget(_header(QtWidgets, "Create {0} Sets".format(len(rows))))
     lay.addWidget(_hint(QtWidgets, "One Set per output. Uncheck rows to "
-                        "skip; channel names are editable. Colours "
-                        "auto-assign from the FORGE palette."))
+                        "skip; channel names are editable; drag row "
+                        "numbers to reorder the created column (an "
+                        "expanded Group's row order isn't readable from "
+                        "the API). Colours auto-assign."))
 
     tbl = QtWidgets.QTableWidget(len(rows), 4)
     tbl.setHorizontalHeaderLabels(["Node", "Output", "Matte", "Channel"])
-    tbl.verticalHeader().setVisible(False)
+    tbl.verticalHeader().setSectionsMovable(True)
+    tbl.verticalHeader().setFixedWidth(28)
     tbl.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
     for i, r in enumerate(rows):
         node_item = QtWidgets.QTableWidgetItem(_node_name(r["node"]))
@@ -815,10 +818,12 @@ def _multi_set_dialog(rows):
     if dlg.exec() != QtWidgets.QDialog.Accepted:
         return
     todo = []
-    for i, r in enumerate(rows):
+    vh = tbl.verticalHeader()
+    for vis in range(tbl.rowCount()):
+        i = vh.logicalIndex(vis)
         if tbl.item(i, 0).checkState() != QtCore.Qt.Checked:
             continue
-        todo.append(dict(r, channel=tbl.item(i, 3).text()))
+        todo.append(dict(rows[i], channel=tbl.item(i, 3).text()))
     if not todo:
         _console("Make Set: nothing checked, nothing created.")
         return
