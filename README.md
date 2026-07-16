@@ -41,6 +41,22 @@ right-click in the Batch schematic.
 1. Select a node, right-click → FORGE Wireless → **Make Set from selected…**
    Name the channel and pick its colour in the dialog (the next free palette
    colour is pre-selected).
+
+   Bigger selections open a preview table instead — one proposed Set per
+   row, channels editable, uncheck to skip, colours auto-assigned:
+   - **multiple nodes** → one Set per node (channel = node name)
+   - **multichannel EXR clip** → one Set per layer, `<layer>_alpha` paired
+     into the Set's matte, channels named from the layer stems (`rgba`,
+     `z`, `ao`, `cryptomatte_mat`, …)
+   - **Action** → one Set per output pair (`[ Comp ]`/`[ Matte ]` paired)
+   - **Group** → one Set per published output, no pairing (the socket list
+     is a user-authored contract). Flame's API cannot originate connections
+     from a Group node (silent no-op), so Sets are wired from the internal
+     node that owns the published socket; when several identically-named
+     internal sockets make that ambiguous, the Set is created named and
+     coloured but unwired — connect it by hand once (the console says
+     which) and Relink preserves it.
+   - **Compass** → expands to its member nodes
 2. Anywhere, **Make Get…** — pick the channel from the list (colour chips,
    double-click works). The Get is created pre-linked, tinted, and hidden.
 3. **Relink all** re-wires every Get to its Set, reasserts colours, and hides

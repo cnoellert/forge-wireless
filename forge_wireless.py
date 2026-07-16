@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -175,6 +175,130 @@ def _source_outputs(node):
     return rgb, matte
 
 
+def _stem_of(sock):
+    """'output1 [ Comp ]' -> 'output1'; other socket names pass through."""
+    return re.sub(r"\s*\[.*\]\s*$", "", sock).strip()
+
+def _stem_pairs(outs):
+    """Pair RGB-ish outputs with their matte partner by naming convention:
+    Result+OutMatte, X+X_alpha, 'output1 [ Comp ]'+'output1 [ Matte ]'.
+    Unpaired matte-ish outputs become solo rows."""
+    outs = list(outs)
+    mattish = set()
+    for sock in outs:
+        low = sock.lower()
+        if low == "outmatte" or low.endswith("_alpha") or "[ matte ]" in low:
+            mattish.add(sock)
+    used = set()
+    pairs = []
+    for sock in outs:
+        if sock in mattish:
+            continue
+        low = sock.lower()
+        cands = [sock + "_alpha", _stem_of(sock) + " [ Matte ]"]
+        if low == "result":
+            cands.append("OutMatte")
+        matte = next((m for m in outs if m in mattish and m not in used
+                      and any(m.lower() == c.lower() for c in cands)), None)
+        if matte:
+            used.add(matte)
+        pairs.append((sock, matte))
+    for sock in outs:
+        if sock in mattish and sock not in used:
+            pairs.append((sock, None))
+    return pairs
+
+def _expand_compasses(selection):
+    """Replace Compass nodes in a selection with their member nodes."""
+    nodes, seen = [], set()
+    for n in (selection or []):
+        members = [n]
+        if str(_val(n.type)).upper() == "COMPASS":
+            try:
+                members = list(n.nodes)
+            except Exception:
+                members = []
+        for m in members:
+            nm = _node_name(m)
+            if nm not in seen:
+                seen.add(nm)
+                nodes.append(m)
+    return nodes
+
+def _expand_selection(selection):
+    """Flatten a selection into Set proposals:
+    [{node, rgb, matte, channel}, ...]
+
+    - Compass -> its member nodes
+    - Group   -> one proposal per published output, NO matte pairing (the
+                 socket list is a user-authored contract; a published matte
+                 is its own case)
+    - other   -> stem-paired outputs (multichannel clips/Action get one
+                 proposal per pair)
+    Wireless SET_/GET nodes and nodes without outputs are skipped.
+    """
+    rows = []
+    for node in _expand_compasses(selection):
+        t = str(_val(node.type)).upper()
+        nm = _node_name(node)
+        if t == MUX_TYPE and (nm.startswith(SET_PREFIX) or _get_channel_of(nm)):
+            continue
+        try:
+            outs = list(dict(node.sockets)["output"].keys())
+        except Exception:
+            outs = []
+        if not outs:
+            continue
+        if t == "GROUP":
+            pairs = [(sock, None) for sock in outs]
+        else:
+            pairs = _stem_pairs(outs)
+        base = _sanitize(nm).lower()
+        for rgb, matte in pairs:
+            if len(pairs) == 1:
+                chan = base
+            elif t == "CLIP":
+                # multichannel EXR: the socket stems ARE the layer names
+                # (rgba, Z, AO, Cryptomatte_MAT, ...) -- the clip's node name
+                # is a versioned filename nobody wants inside a channel
+                chan = _sanitize(_stem_of(rgb)).lower()
+            else:
+                chan = _sanitize("{0}_{1}".format(base, _stem_of(rgb))).lower()
+            rows.append({"node": node, "rgb": rgb, "matte": matte,
+                         "channel": chan})
+    return rows
+
+
+def _group_output_owner(group, sock):
+    """Resolve a Group's published output socket to its internal owner node.
+
+    connect_nodes() from a Group is a silent no-op -- Flame records group
+    connections as originating from the node INSIDE the group (verified:
+    an existing published link reports the internal node as its source).
+    Group internals do appear in flame.batch.nodes, so find the node that
+    owns a socket of this name; disambiguate identically-named sockets by
+    matching the published socket's current destination list. Returns None
+    when the owner is ambiguous (e.g. several internal 'Result' sockets,
+    none connected).
+    """
+    pub_dests = set(str(d) for d in
+                    dict(group.sockets).get("output", {}).get(sock, []))
+    cands = []
+    for n in flame.batch.nodes:
+        if str(_val(n.type)).upper() in ("GROUP", "COMPASS"):
+            continue
+        outs = dict(n.sockets).get("output", {})
+        if sock in outs:
+            cands.append((n, set(str(d) for d in outs[sock])))
+    if len(cands) == 1:
+        return cands[0][0]
+    if pub_dests:
+        matches = [n for n, dests in cands if dests == pub_dests]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
 def _set_colour(node):
     """A Set node's channel colour, or None if never assigned."""
     try:
@@ -211,18 +335,78 @@ def create_set(source_node, channel, colour):
     RGB goes to the Set's Input_0; if the source exposes a matte/alpha
     output socket, it is wired to Matte_0 so alpha rides the channel too.
     """
+    rgb, matte = _source_outputs(source_node)
+    return _create_set_node(source_node, rgb, matte, channel, colour)
+
+def _create_set_node(source_node, rgb, matte, channel, colour, dy=0):
+    """Socket-explicit Set creation (multichannel sources make several)."""
     m = flame.batch.create_node(MUX_CREATE)
     m.name = SET_PREFIX + channel
     m.schematic_colour = colour
     try:
         m.pos_x = source_node.pos_x + 220
-        m.pos_y = source_node.pos_y
+        m.pos_y = source_node.pos_y + dy
     except Exception:
         pass
-    rgb, matte = _source_outputs(source_node)
     flame.batch.connect_nodes(source_node, rgb, m, "Input_0")
     if matte:
         flame.batch.connect_nodes(source_node, matte, m, "Matte_0")
+    return m
+
+def _apply_set_rows(rows):
+    """Create a Set per proposal row; dedupe channels, auto-assign colours,
+    stack multiple Sets of one source vertically. Returns created channels."""
+    existing = set(_muxes_by_channel(SET_PREFIX))
+    per_node = {}
+    made = []
+    unwired = []
+    for r in rows:
+        chan = _sanitize(r["channel"]) or "channel"
+        base, i = chan, 2
+        while chan in existing:
+            chan = "{0}_{1}".format(base, i)
+            i += 1
+        existing.add(chan)
+        idx = per_node.get(id(r["node"]), 0)
+        per_node[id(r["node"])] = idx + 1
+        colour = PALETTE[_next_palette_index()][1]
+        src = r["node"]
+        rgb = r["rgb"]
+        if str(_val(src.type)).upper() == "GROUP":
+            owner = _group_output_owner(src, rgb)
+            if owner is None:
+                m = _create_set_node_unwired(src, chan, colour, dy=idx * 150)
+                unwired.append((chan, rgb))
+                made.append(chan)
+                continue
+            m = _create_set_node(owner, rgb, r["matte"], chan, colour,
+                                 dy=idx * 150)
+            try:
+                m.pos_x = src.pos_x + 220
+                m.pos_y = src.pos_y + idx * 150
+            except Exception:
+                pass
+        else:
+            _create_set_node(src, rgb, r["matte"], chan, colour, dy=idx * 150)
+        made.append(chan)
+    if unwired:
+        _console("UNWIRED (Flame can't resolve which internal node owns the "
+                 "published output -- connect by hand, Relink keeps it): "
+                 + ", ".join("{0} <- {1}".format(c, sock)
+                             for c, sock in unwired))
+    return made
+
+def _create_set_node_unwired(near_node, channel, colour, dy=0):
+    """A named, coloured Set with no input -- for group outputs whose
+    internal owner can't be resolved. The artist wires it by hand once."""
+    m = flame.batch.create_node(MUX_CREATE)
+    m.name = SET_PREFIX + channel
+    m.schematic_colour = colour
+    try:
+        m.pos_x = near_node.pos_x + 220
+        m.pos_y = near_node.pos_y + dy
+    except Exception:
+        pass
     return m
 
 def create_get(channel, near_node=None, at=None):
@@ -327,6 +511,14 @@ FORGE_SS = (
     "  font-size: 12px; }"
     "QListWidget::item { padding: 5px 6px; }"
     "QListWidget::item:selected { background: #2d4f7a; color: #fff; }"
+    "QTableWidget { background: #1e2028; color: #ccc; border: none; "
+    "  font-size: 11px; gridline-color: #2e3240; }"
+    "QTableWidget::item { padding: 2px 6px; }"
+    "QTableWidget::item:selected { background: #2d4f7a; color: #fff; }"
+    "QHeaderView::section { background: #23262f; color: #888; "
+    "  border: none; border-right: 1px solid #3a3f4f; "
+    "  border-bottom: 1px solid #3a3f4f; "
+    "  padding: 5px 6px; font-size: 10px; font-weight: bold; }"
 )
 
 BTN_PRIMARY = (
@@ -360,15 +552,24 @@ def _swatch_icon(QtGui, rgb, size=14):
 # --- dialogs ----------------------------------------------------------------
 
 def make_set_dialog(selection):
-    """GUI: create a coloured SET_ MUX downstream of the selected node."""
+    """GUI: create coloured Set MUXes for the selection.
+
+    A single node with one output pair gets the simple dialog; anything
+    bigger (multi-select, Group, Action, multichannel clip, Compass) gets
+    the preview table with one row per proposed Set.
+    """
     selection = [n for n in (selection or [])]
     if not selection:
-        _console("Make Set: select the node you want to broadcast first.")
+        _console("Make Set: select the node(s) you want to broadcast first.")
         return
-    src = selection[0]
-    if len(selection) > 1:
-        _console("Make Set: multiple nodes selected -- using '{0}'."
-                 .format(_node_name(src)))
+    rows = _expand_selection(selection)
+    if not rows:
+        _console("Make Set: selection has no usable outputs.")
+        return
+    if len(rows) > 1:
+        return _multi_set_dialog(rows)
+    row = rows[0]
+    src = row["node"]
 
     QtCore, QtGui, QtWidgets = _qt()
     existing = set(_muxes_by_channel(SET_PREFIX))
@@ -388,7 +589,7 @@ def make_set_dialog(selection):
     row = QtWidgets.QHBoxLayout()
     row.setSpacing(6)
     row.addWidget(_hint(QtWidgets, "Channel"))
-    name_edit = QtWidgets.QLineEdit(_sanitize(_node_name(src)).lower())
+    name_edit = QtWidgets.QLineEdit(row["channel"])
     name_edit.selectAll()
     row.addWidget(name_edit, 1)
     lay.addLayout(row)
@@ -458,9 +659,79 @@ def make_set_dialog(selection):
     if dlg.exec() != QtWidgets.QDialog.Accepted:
         return
     chan = _sanitize(name_edit.text())
-    create_set(src, chan, PALETTE[chosen["idx"]][1])
+    _create_set_node(src, row["rgb"], row["matte"], chan,
+                     PALETTE[chosen["idx"]][1])
     _console("Set '{0}' created ({1}). Drop Gets anywhere -- they link "
              "by name.".format(chan, PALETTE[chosen["idx"]][0]))
+
+
+def _multi_set_dialog(rows):
+    """Preview table: one row per proposed Set. Uncheck to skip, edit the
+    channel names in place; colours auto-assign from the FORGE palette."""
+    QtCore, QtGui, QtWidgets = _qt()
+
+    dlg = QtWidgets.QDialog()
+    dlg.setWindowTitle("FORGE — Wireless Sets")
+    dlg.setMinimumSize(680, 380)
+    dlg.setStyleSheet(FORGE_SS)
+    lay = QtWidgets.QVBoxLayout(dlg)
+    lay.setContentsMargins(16, 14, 16, 14)
+    lay.setSpacing(10)
+
+    lay.addWidget(_header(QtWidgets, "Create {0} Sets".format(len(rows))))
+    lay.addWidget(_hint(QtWidgets, "One Set per output. Uncheck rows to "
+                        "skip; channel names are editable. Colours "
+                        "auto-assign from the FORGE palette."))
+
+    tbl = QtWidgets.QTableWidget(len(rows), 4)
+    tbl.setHorizontalHeaderLabels(["Node", "Output", "Matte", "Channel"])
+    tbl.verticalHeader().setVisible(False)
+    tbl.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+    for i, r in enumerate(rows):
+        node_item = QtWidgets.QTableWidgetItem(_node_name(r["node"]))
+        node_item.setFlags(QtCore.Qt.ItemIsUserCheckable
+                           | QtCore.Qt.ItemIsEnabled
+                           | QtCore.Qt.ItemIsSelectable)
+        node_item.setCheckState(QtCore.Qt.Checked)
+        tbl.setItem(i, 0, node_item)
+        for col, txt in ((1, r["rgb"]), (2, r["matte"] or "—")):
+            cell = QtWidgets.QTableWidgetItem(txt)
+            cell.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            tbl.setItem(i, col, cell)
+        tbl.setItem(i, 3, QtWidgets.QTableWidgetItem(r["channel"]))
+    tbl.horizontalHeader().setStretchLastSection(True)
+    tbl.setColumnWidth(0, 170)
+    tbl.setColumnWidth(1, 150)
+    tbl.setColumnWidth(2, 130)
+    lay.addWidget(tbl, 1)
+
+    btns = QtWidgets.QHBoxLayout()
+    btns.addStretch()
+    cancel = QtWidgets.QPushButton("Cancel")
+    cancel.setStyleSheet(BTN_QUIET)
+    cancel.clicked.connect(dlg.reject)
+    cancel.setAutoDefault(False)
+    ok = QtWidgets.QPushButton("Create All")
+    ok.setStyleSheet(BTN_PRIMARY)
+    ok.clicked.connect(dlg.accept)
+    ok.setAutoDefault(True)
+    ok.setDefault(True)
+    btns.addWidget(cancel)
+    btns.addWidget(ok)
+    lay.addLayout(btns)
+
+    if dlg.exec() != QtWidgets.QDialog.Accepted:
+        return
+    todo = []
+    for i, r in enumerate(rows):
+        if tbl.item(i, 0).checkState() != QtCore.Qt.Checked:
+            continue
+        todo.append(dict(r, channel=tbl.item(i, 3).text()))
+    if not todo:
+        _console("Make Set: nothing checked, nothing created.")
+        return
+    made = _apply_set_rows(todo)
+    _console("Created {0} Set(s): {1}".format(len(made), ", ".join(made)))
 
 
 def make_get_dialog(selection):
