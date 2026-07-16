@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 # --- configuration ---------------------------------------------------------
 
@@ -366,6 +366,15 @@ def _create_set_node(source_node, rgb, matte, channel, colour, dy=0):
         flame.batch.connect_nodes(source_node, matte, m, "Matte_0")
     return m
 
+def _set_is_wired(set_node):
+    """True if any input of the Set actually connected. connect_nodes() is a
+    silent no-op for type-incompatible links (e.g. motion-vector outputs
+    into a MUX image/matte input), so every wire must be verified."""
+    try:
+        return any(v for v in dict(set_node.sockets)["input"].values())
+    except Exception:
+        return False
+
 def _apply_set_rows(rows):
     """Create a Set per proposal row; dedupe channels, auto-assign colours,
     stack multiple Sets of one source vertically. Returns created channels."""
@@ -373,6 +382,7 @@ def _apply_set_rows(rows):
     per_node = {}
     made = []
     unwired = []
+    skipped = []
     for r in rows:
         chan = _sanitize(r["channel"]) or "channel"
         base, i = chan, 2
@@ -400,8 +410,19 @@ def _apply_set_rows(rows):
             except Exception:
                 pass
         else:
-            _create_set_node(src, rgb, r["matte"], chan, colour, dy=idx * -150)
+            m = _create_set_node(src, rgb, r["matte"], chan, colour,
+                                 dy=idx * -150)
+            if not _set_is_wired(m):
+                m.delete()
+                existing.discard(chan)
+                skipped.append((chan, rgb))
+                continue
         made.append(chan)
+    if skipped:
+        _console("SKIPPED (output can't feed a MUX -- vector-type sockets "
+                 "can't ride a wireless channel): "
+                 + ", ".join("{0} <- {1}".format(c, sock)
+                             for c, sock in skipped))
     if unwired:
         _console("UNWIRED (Flame can't resolve which internal node owns the "
                  "published output -- connect by hand, Relink keeps it): "
@@ -676,8 +697,14 @@ def make_set_dialog(selection):
     if dlg.exec() != QtWidgets.QDialog.Accepted:
         return
     chan = _sanitize(name_edit.text())
-    _create_set_node(src, row["rgb"], row["matte"], chan,
-                     PALETTE[chosen["idx"]][1])
+    m = _create_set_node(src, row["rgb"], row["matte"], chan,
+                         PALETTE[chosen["idx"]][1])
+    if not _set_is_wired(m):
+        m.delete()
+        _console("No Set created: output '{0}' of '{1}' can't feed a MUX "
+                 "(vector-type socket) -- a wireless channel can't carry "
+                 "it.".format(row["rgb"], _node_name(src)))
+        return
     _console("Set '{0}' created ({1}). Drop Gets anywhere -- they link "
              "by name.".format(chan, PALETTE[chosen["idx"]][0]))
 
