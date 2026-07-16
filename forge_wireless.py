@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 # --- configuration ---------------------------------------------------------
 
@@ -375,19 +375,19 @@ def _apply_set_rows(rows):
         if str(_val(src.type)).upper() == "GROUP":
             owner = _group_output_owner(src, rgb)
             if owner is None:
-                m = _create_set_node_unwired(src, chan, colour, dy=idx * 150)
+                m = _create_set_node_unwired(src, chan, colour, dy=idx * -150)
                 unwired.append((chan, rgb))
                 made.append(chan)
                 continue
             m = _create_set_node(owner, rgb, r["matte"], chan, colour,
-                                 dy=idx * 150)
+                                 dy=idx * -150)
             try:
                 m.pos_x = src.pos_x + 220
-                m.pos_y = src.pos_y + idx * 150
+                m.pos_y = src.pos_y + idx * -150
             except Exception:
                 pass
         else:
-            _create_set_node(src, rgb, r["matte"], chan, colour, dy=idx * 150)
+            _create_set_node(src, rgb, r["matte"], chan, colour, dy=idx * -150)
         made.append(chan)
     if unwired:
         _console("UNWIRED (Flame can't resolve which internal node owns the "
@@ -423,7 +423,7 @@ def create_get(channel, near_node=None, at=None):
             m.pos_x, m.pos_y = int(at[0]), int(at[1])
         elif near_node is not None:
             m.pos_x = near_node.pos_x
-            m.pos_y = near_node.pos_y + 180
+            m.pos_y = near_node.pos_y - 180
     except Exception:
         pass
     _link_gets({channel: [m]})
