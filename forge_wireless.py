@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 # --- configuration ---------------------------------------------------------
 
@@ -424,9 +424,12 @@ def make_set_dialog(selection):
     cancel = QtWidgets.QPushButton("Cancel")
     cancel.setStyleSheet(BTN_QUIET)
     cancel.clicked.connect(dlg.reject)
+    cancel.setAutoDefault(False)
     ok = QtWidgets.QPushButton("Create Set")
     ok.setStyleSheet(BTN_PRIMARY)
     ok.clicked.connect(dlg.accept)
+    ok.setAutoDefault(True)
+    ok.setDefault(True)
     btns.addWidget(cancel)
     btns.addWidget(ok)
     lay.addLayout(btns)
@@ -501,9 +504,12 @@ def make_get_dialog(selection):
     cancel = QtWidgets.QPushButton("Cancel")
     cancel.setStyleSheet(BTN_QUIET)
     cancel.clicked.connect(dlg.reject)
+    cancel.setAutoDefault(False)
     ok = QtWidgets.QPushButton("Create Get")
     ok.setStyleSheet(BTN_PRIMARY)
     ok.clicked.connect(dlg.accept)
+    ok.setAutoDefault(True)
+    ok.setDefault(True)
     btns.addWidget(cancel)
     btns.addWidget(ok)
     lay.addLayout(btns)
@@ -559,9 +565,12 @@ def rename_channel_dialog(selection):
     cancel = QtWidgets.QPushButton("Cancel")
     cancel.setStyleSheet(BTN_QUIET)
     cancel.clicked.connect(dlg.reject)
+    cancel.setAutoDefault(False)
     ok = QtWidgets.QPushButton("Rename")
     ok.setStyleSheet(BTN_PRIMARY)
     ok.clicked.connect(dlg.accept)
+    ok.setAutoDefault(True)
+    ok.setDefault(True)
     btns.addWidget(cancel)
     btns.addWidget(ok)
     lay.addLayout(btns)
