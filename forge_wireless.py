@@ -41,6 +41,8 @@ import re
 
 import flame
 
+__version__ = "0.4.0"
+
 # --- configuration ---------------------------------------------------------
 
 SET_PREFIX = "SET_"
@@ -217,17 +219,23 @@ def create_set(source_node, channel, colour):
         flame.batch.connect_nodes(source_node, matte, m, "Matte_0")
     return m
 
-def create_get(channel, near_node=None):
+def create_get(channel, near_node=None, at=None):
     """Create a Get for the channel, wire it to its Set, tint it, hide the
-    pipes. Subsequent Gets on the same channel get numbered names."""
+    pipes. Subsequent Gets on the same channel get numbered names.
+
+    Placement: `at` (an (x, y) schematic position, e.g. the cursor position
+    captured when the menu was invoked) wins over `near_node`.
+    """
     m = flame.batch.create_node(MUX_CREATE)
     m.name = _free_get_name(channel)
-    if near_node is not None:
-        try:
+    try:
+        if at is not None:
+            m.pos_x, m.pos_y = int(at[0]), int(at[1])
+        elif near_node is not None:
             m.pos_x = near_node.pos_x
             m.pos_y = near_node.pos_y + 180
-        except Exception:
-            pass
+    except Exception:
+        pass
     _link_gets({channel: [m]})
     return m
 
@@ -454,6 +462,13 @@ def make_get_dialog(selection):
         return
     get_map = _gets_by_channel()
 
+    # capture where the menu was invoked BEFORE the dialog opens -- by the
+    # time it closes the mouse has moved to the dialog's buttons
+    try:
+        click_pos = tuple(flame.batch.cursor_position)
+    except Exception:
+        click_pos = None
+
     QtCore, QtGui, QtWidgets = _qt()
 
     dlg = QtWidgets.QDialog()
@@ -497,7 +512,7 @@ def make_get_dialog(selection):
         return
     chan = lst.currentItem().data(QtCore.Qt.UserRole)
     near = selection[0] if selection else None
-    create_get(chan, near_node=near)
+    create_get(chan, near_node=near, at=click_pos)
     _console("Get '{0}' created, linked and hidden.".format(chan))
 
 
@@ -517,6 +532,8 @@ def rename_channel_dialog(selection):
     # numbered Gets (GET_<channel>__2, ...) carry the numbering suffix in the
     # node name -- strip it or the rename targets a channel that doesn't exist
     old = re.sub(r"__\d+$", "", old)
+    _console("Rename v{0}: node '{1}' -> channel '{2}'"
+             .format(__version__, nm, old))
 
     QtCore, QtGui, QtWidgets = _qt()
 
@@ -597,9 +614,11 @@ def _safe(fn):
     return wrapped
 
 def get_batch_custom_ui_actions():
+    # version in the title doubles as a live check that Flame's hook rescan
+    # actually picked up the deployed file
     return [
         {
-            "name": "FORGE Wireless",
+            "name": "FORGE Wireless v" + __version__,
             "actions": [
                 {"name": "Make Set from selected...", "execute": _safe(make_set_dialog)},
                 {"name": "Make Get...",               "execute": _safe(make_get_dialog)},
