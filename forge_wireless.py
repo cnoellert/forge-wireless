@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.7.1"
+__version__ = "0.7.2"
 
 # --- configuration ---------------------------------------------------------
 
@@ -351,20 +351,44 @@ def create_set(source_node, channel, colour):
     rgb, matte = _source_outputs(source_node)
     return _create_set_node(source_node, rgb, matte, channel, colour)
 
-def _create_set_node(source_node, rgb, matte, channel, colour, dy=0):
-    """Socket-explicit Set creation (multichannel sources make several)."""
+def _create_set_node(source_node, rgb, matte, channel, colour, dy=0, at=None):
+    """Socket-explicit Set creation (multichannel sources make several).
+    `at` places the node absolutely; otherwise source-relative +220/dy."""
     m = flame.batch.create_node(MUX_CREATE)
     m.name = SET_PREFIX + channel
     m.schematic_colour = colour
     try:
-        m.pos_x = source_node.pos_x + 220
-        m.pos_y = source_node.pos_y + dy
+        if at is not None:
+            m.pos_x, m.pos_y = int(at[0]), int(at[1])
+        else:
+            m.pos_x = source_node.pos_x + 220
+            m.pos_y = source_node.pos_y + dy
     except Exception:
         pass
     flame.batch.connect_nodes(source_node, rgb, m, "Input_0")
     if matte:
         flame.batch.connect_nodes(source_node, matte, m, "Matte_0")
     return m
+
+def _clear_column_x(base_x, ys):
+    """First x at/right of base_x where a column of Sets at heights `ys`
+    doesn't sit on existing nodes (expanded Groups/clips are tall, and
+    artists park nodes next to their sources -- +220 alone lands inside)."""
+    occupied = []
+    for n in flame.batch.nodes:
+        try:
+            occupied.append((n.pos_x.get_value(), n.pos_y.get_value()))
+        except Exception:
+            pass
+    x = base_x
+    for _ in range(24):
+        clear = all(not (abs(nx - x) < 200 and
+                         any(abs(ny - y) < 110 for y in ys))
+                    for nx, ny in occupied)
+        if clear:
+            return x
+        x += 200
+    return x
 
 def _set_is_wired(set_node):
     """True if any input of the Set actually connected. connect_nodes() is a
@@ -377,47 +401,63 @@ def _set_is_wired(set_node):
 
 def _apply_set_rows(rows):
     """Create a Set per proposal row; dedupe channels, auto-assign colours,
-    stack multiple Sets of one source vertically. Returns created channels."""
+    stack each source's Sets in a collision-free column to its right.
+    Returns created channels."""
     existing = set(_muxes_by_channel(SET_PREFIX))
-    per_node = {}
     made = []
     unwired = []
     skipped = []
+
+    buckets, order = {}, []
     for r in rows:
-        chan = _sanitize(r["channel"]) or "channel"
-        base, i = chan, 2
-        while chan in existing:
-            chan = "{0}_{1}".format(base, i)
-            i += 1
-        existing.add(chan)
-        idx = per_node.get(id(r["node"]), 0)
-        per_node[id(r["node"])] = idx + 1
-        colour = PALETTE[_next_palette_index()][1]
-        src = r["node"]
-        rgb = r["rgb"]
-        if str(_val(src.type)).upper() == "GROUP":
-            owner = _group_output_owner(src, rgb)
-            if owner is None:
-                m = _create_set_node_unwired(src, chan, colour, dy=idx * -150)
-                unwired.append((chan, rgb))
-                made.append(chan)
-                continue
-            m = _create_set_node(owner, rgb, r["matte"], chan, colour,
-                                 dy=idx * -150)
-            try:
-                m.pos_x = src.pos_x + 220
-                m.pos_y = src.pos_y + idx * -150
-            except Exception:
-                pass
-        else:
-            m = _create_set_node(src, rgb, r["matte"], chan, colour,
-                                 dy=idx * -150)
-            if not _set_is_wired(m):
-                m.delete()
-                existing.discard(chan)
-                skipped.append((chan, rgb))
-                continue
-        made.append(chan)
+        k = id(r["node"])
+        if k not in buckets:
+            buckets[k] = []
+            order.append(k)
+        buckets[k].append(r)
+
+    for k in order:
+        rs = buckets[k]
+        src = rs[0]["node"]
+        try:
+            base_x = src.pos_x.get_value() + 220
+            base_y = src.pos_y.get_value()
+        except Exception:
+            base_x = base_y = None
+        col = None
+        if base_x is not None:
+            ys = [base_y - i * 150 for i in range(len(rs))]
+            col = _clear_column_x(base_x, ys)
+
+        for i, r in enumerate(rs):
+            chan = _sanitize(r["channel"]) or "channel"
+            base, n2 = chan, 2
+            while chan in existing:
+                chan = "{0}_{1}".format(base, n2)
+                n2 += 1
+            existing.add(chan)
+            colour = PALETTE[_next_palette_index()][1]
+            at = (col, base_y - i * 150) if col is not None else None
+            rgb = r["rgb"]
+            if str(_val(src.type)).upper() == "GROUP":
+                owner = _group_output_owner(src, rgb)
+                if owner is None:
+                    m = _create_set_node_unwired(src, chan, colour, at=at)
+                    unwired.append((chan, rgb))
+                    made.append(chan)
+                    continue
+                m = _create_set_node(owner, rgb, r["matte"], chan, colour,
+                                     at=at)
+            else:
+                m = _create_set_node(src, rgb, r["matte"], chan, colour,
+                                     at=at)
+                if not _set_is_wired(m):
+                    m.delete()
+                    existing.discard(chan)
+                    skipped.append((chan, rgb))
+                    continue
+            made.append(chan)
+
     if skipped:
         _console("SKIPPED (output can't feed a MUX -- vector-type sockets "
                  "can't ride a wireless channel): "
@@ -430,15 +470,18 @@ def _apply_set_rows(rows):
                              for c, sock in unwired))
     return made
 
-def _create_set_node_unwired(near_node, channel, colour, dy=0):
+def _create_set_node_unwired(near_node, channel, colour, dy=0, at=None):
     """A named, coloured Set with no input -- for group outputs whose
     internal owner can't be resolved. The artist wires it by hand once."""
     m = flame.batch.create_node(MUX_CREATE)
     m.name = SET_PREFIX + channel
     m.schematic_colour = colour
     try:
-        m.pos_x = near_node.pos_x + 220
-        m.pos_y = near_node.pos_y + dy
+        if at is not None:
+            m.pos_x, m.pos_y = int(at[0]), int(at[1])
+        else:
+            m.pos_x = near_node.pos_x + 220
+            m.pos_y = near_node.pos_y + dy
     except Exception:
         pass
     return m
