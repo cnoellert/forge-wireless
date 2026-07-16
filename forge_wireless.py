@@ -10,7 +10,8 @@
 #   * A "Get" is a MUX node named  GET_<channel>  whose inputs are connected
 #     (by this script) to the matching Set's Result AND OutMatte -- then the
 #     input links are hidden (node.hide_input) so no noodle crosses the
-#     schematic.
+#     schematic. Flame node names are unique, so additional Gets on the same
+#     channel are numbered:  GET_<channel>__2, GET_<channel>__3, ...
 #
 # Why MUX + hidden link (and not a data side-channel):
 #   connect_nodes() makes a REAL connection, so Flame's render and dependency
@@ -83,8 +84,14 @@ def _is_mux(node):
     return str(_val(node.type)).upper() == MUX_TYPE
 
 def _sanitize(channel):
-    channel = re.sub(r"[^A-Za-z0-9_\-]+", "_", channel.strip())
-    return channel.strip("_")
+    """Channel charset: [A-Za-z0-9_], no consecutive underscores.
+
+    Flame silently coerces other characters (incl. '-') to '_' in node
+    names, so anything looser breaks the name mapping. Single underscores
+    only, because '__<digits>' is reserved as the Get numbering suffix.
+    """
+    channel = re.sub(r"[^A-Za-z0-9]+", "_", channel.strip())
+    return re.sub(r"_+", "_", channel).strip("_")
 
 def _lighten(rgb, amount=GET_LIGHTEN):
     return tuple(c + (1.0 - c) * amount for c in rgb)
@@ -112,6 +119,36 @@ def _muxes_by_channel(prefix):
         if nm.startswith(prefix) and len(nm) > len(prefix):
             out.setdefault(nm[len(prefix):], []).append(n)
     return out
+
+def _gets_by_channel():
+    """channel -> [nodes] for every GET_ MUX, resolving numbered suffixes.
+
+    Flame node names are unique, so multiple Gets on one channel are named
+    GET_<channel>, GET_<channel>__2, GET_<channel>__3, ... The '__<digits>'
+    suffix is unambiguous because sanitized channel names never contain
+    consecutive underscores.
+    """
+    out = {}
+    for n in flame.batch.nodes:
+        if not _is_mux(n):
+            continue
+        nm = _node_name(n)
+        if not (nm.startswith(GET_PREFIX) and len(nm) > len(GET_PREFIX)):
+            continue
+        chan = re.sub(r"__\d+$", "", nm[len(GET_PREFIX):])
+        out.setdefault(chan, []).append(n)
+    return out
+
+def _free_get_name(channel):
+    """First unused Get node name for a channel (names are unique in Flame)."""
+    taken = {_node_name(n) for n in flame.batch.nodes}
+    base = GET_PREFIX + channel
+    if base not in taken:
+        return base
+    i = 2
+    while "{0}__{1}".format(base, i) in taken:
+        i += 1
+    return "{0}__{1}".format(base, i)
 
 def _source_outputs(node):
     """(rgb_socket, matte_socket_or_None) for an arbitrary upstream node.
@@ -181,9 +218,10 @@ def create_set(source_node, channel, colour):
     return m
 
 def create_get(channel, near_node=None):
-    """Create GET_<channel>, wire it to its Set, tint it, hide the pipe."""
+    """Create a Get for the channel, wire it to its Set, tint it, hide the
+    pipes. Subsequent Gets on the same channel get numbered names."""
     m = flame.batch.create_node(MUX_CREATE)
-    m.name = GET_PREFIX + channel
+    m.name = _free_get_name(channel)
     if near_node is not None:
         try:
             m.pos_x = near_node.pos_x
@@ -223,9 +261,9 @@ def _link_gets(get_map, set_map=None):
     return linked, hidden, missing
 
 def relink(selection=None):
-    """Re-wire every GET_<c> to SET_<c>, reassert colours, hide the pipes."""
+    """Re-wire every Get to its Set, reassert colours, hide the pipes."""
     set_map = _muxes_by_channel(SET_PREFIX)
-    get_map = _muxes_by_channel(GET_PREFIX)
+    get_map = _gets_by_channel()
     dupes = sorted(c for c, ns in set_map.items() if len(ns) > 1)
 
     linked, hidden, missing = _link_gets(get_map, set_map)
@@ -240,12 +278,21 @@ def relink(selection=None):
     _console(msg)
 
 def rename_channel(old, new):
-    """Rename a channel across all of its Set and Get nodes."""
+    """Rename a channel across its Set and all of its (numbered) Get nodes.
+
+    Caller must ensure `new` is not an existing channel -- Flame rejects
+    duplicate node names, and a mid-loop rejection would leave the channel
+    half-renamed.
+    """
+    set_map = _muxes_by_channel(SET_PREFIX)
+    gets = _gets_by_channel().get(old, [])
     renamed = 0
-    for prefix in (SET_PREFIX, GET_PREFIX):
-        for n in _muxes_by_channel(prefix).get(old, []):
-            n.name = prefix + new
-            renamed += 1
+    for n in set_map.get(old, []):
+        n.name = SET_PREFIX + new
+        renamed += 1
+    for n in gets:
+        n.name = _free_get_name(new)
+        renamed += 1
     return renamed
 
 
@@ -405,7 +452,7 @@ def make_get_dialog(selection):
     if not set_map:
         _console("Make Get: no Set nodes yet -- create a Set first.")
         return
-    get_map = _muxes_by_channel(GET_PREFIX)
+    get_map = _gets_by_channel()
 
     QtCore, QtGui, QtWidgets = _qt()
 
@@ -483,6 +530,10 @@ def rename_channel_dialog(selection):
     edit.selectAll()
     lay.addWidget(edit)
 
+    warn = _hint(QtWidgets, "")
+    warn.setStyleSheet("color: #C0392B; font-size: 11px;")
+    lay.addWidget(warn)
+
     btns = QtWidgets.QHBoxLayout()
     btns.addStretch()
     cancel = QtWidgets.QPushButton("Cancel")
@@ -495,10 +546,27 @@ def rename_channel_dialog(selection):
     btns.addWidget(ok)
     lay.addLayout(btns)
 
+    existing = set(_muxes_by_channel(SET_PREFIX)) - {old}
+
+    def _validate():
+        new = _sanitize(edit.text())
+        if not new:
+            warn.setText("Channel name is empty.")
+            ok.setEnabled(False)
+        elif new in existing:
+            warn.setText("Channel '{0}' already exists.".format(new))
+            ok.setEnabled(False)
+        else:
+            warn.setText("")
+            ok.setEnabled(True)
+
+    edit.textChanged.connect(_validate)
+    _validate()
+
     if dlg.exec() != QtWidgets.QDialog.Accepted:
         return
     new = _sanitize(edit.text())
-    if not new or new == old:
+    if not new or new == old or new in existing:
         return
     count = rename_channel(old, new)
     _console("Renamed '{0}' -> '{1}' across {2} node(s).".format(old, new, count))
@@ -506,15 +574,30 @@ def rename_channel_dialog(selection):
 
 # --- Flame hooks -----------------------------------------------------------
 
+def _safe(fn):
+    """Surface action errors in the Flame console -- the hook system swallows
+    exceptions from menu callbacks, which turns bugs into silent no-ops."""
+    def wrapped(selection=None):
+        try:
+            return fn(selection)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            _console("ERROR in {0}: {1}".format(
+                getattr(fn, "__name__", "action"),
+                traceback.format_exc().strip().splitlines()[-1]))
+    wrapped.__name__ = getattr(fn, "__name__", "action")
+    return wrapped
+
 def get_batch_custom_ui_actions():
     return [
         {
             "name": "FORGE Wireless",
             "actions": [
-                {"name": "Make Set from selected...", "execute": make_set_dialog},
-                {"name": "Make Get...",               "execute": make_get_dialog},
-                {"name": "Rename channel...",         "execute": rename_channel_dialog},
-                {"name": "Relink all",                "execute": relink},
+                {"name": "Make Set from selected...", "execute": _safe(make_set_dialog)},
+                {"name": "Make Get...",               "execute": _safe(make_get_dialog)},
+                {"name": "Rename channel...",         "execute": _safe(rename_channel_dialog)},
+                {"name": "Relink all",                "execute": _safe(relink)},
             ],
         }
     ]

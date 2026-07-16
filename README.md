@@ -11,6 +11,13 @@ Set's `Result` and `OutMatte`, then hidden (`node.hide_input`) so no noodle
 crosses the schematic. Because the connections are real, Flame's render and
 dependency graph stay correct — the hiding is purely cosmetic.
 
+Flame enforces unique node names, so additional Gets on one channel are
+numbered `GET_<channel>__2`, `GET_<channel>__3`, … The double-underscore
+suffix is unambiguous because channel names are sanitized to `[A-Za-z0-9_]`
+with no consecutive underscores (Flame silently coerces other characters to
+`_` anyway). Errors in any menu action are reported to the Flame console —
+the hook system otherwise swallows exceptions silently.
+
 ## Colours
 
 Every channel gets a colour from the FORGE palette (12 hues, ember first).
