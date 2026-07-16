@@ -51,11 +51,13 @@ right-click in the Batch schematic.
    - **Action** → one Set per output pair (`[ Comp ]`/`[ Matte ]` paired)
    - **Group** → one Set per published output, no pairing (the socket list
      is a user-authored contract). Flame's API cannot originate connections
-     from a Group node (silent no-op), so Sets are wired from the internal
-     node that owns the published socket; when several identically-named
-     internal sockets make that ambiguous, the Set is created named and
-     coloured but unwired — connect it by hand once (the console says
-     which) and Relink preserves it.
+     from a Group node (silent no-op) — connections belong to the node
+     *inside* the group — so each published output is resolved to its
+     internal owner by trial: connect a candidate, check that the group's
+     published tab actually routes it, disconnect and try the next if not
+     (wrong candidates leave no residue). If nothing routes, the Set is
+     left named, coloured, and unwired — connect it by hand once and
+     Relink preserves it.
    - **Compass** → expands to its member nodes
 2. Anywhere, **Make Get…** — channels are grouped under the node that feeds
    their Set (read live from the connection, no stored metadata) with a

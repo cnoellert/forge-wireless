@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.7.2"
+__version__ = "0.7.3"
 
 # --- configuration ---------------------------------------------------------
 
@@ -269,47 +269,55 @@ def _expand_selection(selection):
     return rows
 
 
-def _group_output_owner(group, sock):
-    """Resolve a Group's published output socket to its internal owner node.
+def _wire_group_set(group, sock, set_node):
+    """Wire a Set to a Group's published output by trial resolution.
 
-    connect_nodes() from a Group is a silent no-op -- Flame records group
-    connections as originating from the node INSIDE the group (verified:
-    an existing published link reports the internal node as its source).
-    Group internals do appear in flame.batch.nodes, so find the node that
-    owns a socket of this name; disambiguate identically-named sockets by
-    matching the published socket's current destination list. Returns None
-    when the owner is ambiguous (e.g. several internal 'Result' sockets,
-    none connected).
+    connect_nodes() from a Group is a silent no-op, and Flame records
+    published-output connections as originating from the node INSIDE the
+    group -- but several internal nodes can expose identically-named
+    sockets, and only one owns the published tab (verified live: two
+    internal nodes both had 'Result'; connecting the wrong one made a
+    plain connection that did NOT route through the group).
+
+    So: try candidate nodes nearest the group first; after each connect,
+    check whether the group's published socket now lists the Set as a
+    destination. Wrong candidates are disconnected (no residue on the
+    group's tabs -- verified). Returns True once wired.
     """
-    pub_dests = set(str(d) for d in
-                    dict(group.sockets).get("output", {}).get(sock, []))
+    try:
+        gx, gy = group.pos_x.get_value(), group.pos_y.get_value()
+    except Exception:
+        gx = gy = 0
+    set_name = _node_name(set_node)
     cands = []
     for n in flame.batch.nodes:
-        if str(_val(n.type)).upper() in ("GROUP", "COMPASS"):
+        t = str(_val(n.type)).upper()
+        nm = _node_name(n)
+        if t in ("GROUP", "COMPASS") or t == MUX_TYPE and (
+                nm.startswith(SET_PREFIX) or _get_channel_of(nm)):
             continue
-        outs = dict(n.sockets).get("output", {})
-        if sock in outs:
-            cands.append((n, set(str(d) for d in outs[sock])))
-    if len(cands) == 1:
-        return cands[0][0]
-    if pub_dests:
-        matches = [n for n, dests in cands if dests == pub_dests]
-        if len(matches) == 1:
-            return matches[0]
-    return None
-
-
-def _set_source_name(set_node):
-    """Name of the node feeding a Set, read live from its input connection.
-    None for unwired Sets. The graph is the database: this survives node
-    renames, rewires and setup reloads with no stored metadata."""
-    try:
-        for dests in dict(set_node.sockets)["input"].values():
-            if dests:
-                return str(dests[0])
-    except Exception:
-        pass
-    return None
+        if n is set_node:
+            continue
+        if sock in dict(n.sockets).get("output", {}):
+            try:
+                d = abs(n.pos_x.get_value() - gx) + abs(n.pos_y.get_value() - gy)
+            except Exception:
+                d = 1e9
+            cands.append((d, nm, n))
+    cands.sort(key=lambda c: (c[0], c[1]))
+    for _, _, cand in cands[:12]:
+        try:
+            flame.batch.connect_nodes(cand, sock, set_node, "Input_0")
+        except Exception:
+            continue
+        routed = set_name in str(dict(group.sockets)["output"].get(sock, []))
+        if routed:
+            return True
+        try:
+            flame.batch.disconnect_node(set_node, "Input_0")
+        except Exception:
+            pass
+    return False
 
 
 def _set_colour(node):
@@ -440,14 +448,11 @@ def _apply_set_rows(rows):
             at = (col, base_y - i * 150) if col is not None else None
             rgb = r["rgb"]
             if str(_val(src.type)).upper() == "GROUP":
-                owner = _group_output_owner(src, rgb)
-                if owner is None:
-                    m = _create_set_node_unwired(src, chan, colour, at=at)
+                m = _create_set_node_unwired(src, chan, colour, at=at)
+                if not _wire_group_set(src, rgb, m):
                     unwired.append((chan, rgb))
-                    made.append(chan)
-                    continue
-                m = _create_set_node(owner, rgb, r["matte"], chan, colour,
-                                     at=at)
+                made.append(chan)
+                continue
             else:
                 m = _create_set_node(src, rgb, r["matte"], chan, colour,
                                      at=at)
