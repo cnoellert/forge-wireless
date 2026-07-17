@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.7.5"
+__version__ = "0.7.6"
 
 # --- configuration ---------------------------------------------------------
 
@@ -350,6 +350,19 @@ def _wire_group_set(group, sock, set_node):
         except Exception:
             pass
     return False
+
+
+def _set_source_name(set_node):
+    """Name of the node feeding a Set, read live from its input connection.
+    None for unwired Sets. The graph is the database: this survives node
+    renames, rewires and setup reloads with no stored metadata."""
+    try:
+        for dests in dict(set_node.sockets)["input"].values():
+            if dests:
+                return str(dests[0])
+    except Exception:
+        pass
+    return None
 
 
 def _set_colour(node):
