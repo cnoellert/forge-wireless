@@ -41,7 +41,7 @@ import re
 
 import flame
 
-__version__ = "0.7.6"
+__version__ = "0.7.7"
 
 # --- configuration ---------------------------------------------------------
 
@@ -716,14 +716,14 @@ def make_set_dialog(selection):
     lay.addWidget(_header(QtWidgets, "Create Set from '{0}'"
                           .format(_node_name(src))))
 
-    # channel name
-    row = QtWidgets.QHBoxLayout()
-    row.setSpacing(6)
-    row.addWidget(_hint(QtWidgets, "Channel"))
+    # channel name (careful: `row` is the Set proposal dict -- don't shadow)
+    name_row = QtWidgets.QHBoxLayout()
+    name_row.setSpacing(6)
+    name_row.addWidget(_hint(QtWidgets, "Channel"))
     name_edit = QtWidgets.QLineEdit(row["channel"])
     name_edit.selectAll()
-    row.addWidget(name_edit, 1)
-    lay.addLayout(row)
+    name_row.addWidget(name_edit, 1)
+    lay.addLayout(name_row)
 
     # colour swatches
     lay.addWidget(_hint(QtWidgets, "Channel colour  (Gets take a lighter tint)"))
