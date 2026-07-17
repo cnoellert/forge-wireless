@@ -36,6 +36,13 @@
 #   after creation: outputs that can't feed a MUX (motion-vector pipes are
 #   a distinct link type) are skipped instead of leaving dead Sets.
 #
+# Change Set input
+#   Re-feed a channel from a different node: select only the NEW source,
+#   pick the channel (grouped picker shows each channel's current feeder),
+#   and both pipes swap atomically -- matte cleared when the new source
+#   has none. Relink warns about SPLIT FEED Sets (Input and Matte from
+#   different nodes), the trap manual half-rewiring leaves behind.
+#
 # Verified against Flame 2026.2 Python API (details in README):
 #   node.type reads "MUX"; hide_input / schematic_colour are real dynamic
 #   attributes (hasattr() is useless -- PyNode resolves any name; the true
