@@ -24,10 +24,27 @@
 #   painted a lightened tint of its Set's colour at relink time. No external
 #   state -- reload the setup and the colours come back with the nodes.
 #
-# Verified against Flame 2026.2 Python API:
-#   node.type reads "MUX"; node.hide_input / node.schematic_colour are real
-#   dynamic attributes (listed in node.attributes -- note hasattr() is useless
-#   here because PyNode resolves any attribute name); node.delete() removes.
+# Multichannel sources
+#   Make Set expands any selection into per-Set proposals; more than one
+#   opens a preview table (editable channels, drag row numbers to reorder
+#   the created column). Multichannel EXR clips pair <layer>_alpha into the
+#   matte and name channels from the layer stems; Action pairs its
+#   [ Comp ]/[ Matte ] outputs by stem; Compass expands to members; Groups
+#   get one Set per published output, wired by trial resolution (see
+#   _wire_group_set -- connect_nodes from a Group is a silent no-op).
+#   Placement is collision-aware (_clear_column_x). Wires are VERIFIED
+#   after creation: outputs that can't feed a MUX (motion-vector pipes are
+#   a distinct link type) are skipped instead of leaving dead Sets.
+#
+# Verified against Flame 2026.2 Python API (details in README):
+#   node.type reads "MUX"; hide_input / schematic_colour are real dynamic
+#   attributes (hasattr() is useless -- PyNode resolves any name; the true
+#   list is node.attributes); connect_nodes() no-ops silently on
+#   type-incompatible links and Group sources -- always verify via
+#   node.sockets; disconnect_node(node, "Input_0") disconnects; selecting a
+#   Group also selects its hidden members (the only membership oracle);
+#   menu callbacks swallow exceptions (everything is wrapped in _safe);
+#   schematic +Y renders upward.
 #
 # Install
 #   Drop this file in a Flame python hooks path, e.g.
@@ -41,7 +58,7 @@ import re
 
 import flame
 
-__version__ = "0.7.7"
+__version__ = "1.0.0"
 
 # --- configuration ---------------------------------------------------------
 
