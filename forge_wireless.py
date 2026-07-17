@@ -58,7 +58,7 @@ import re
 
 import flame
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -610,7 +610,14 @@ def relink(selection=None):
 
     linked, hidden, missing = _link_gets(get_map, set_map)
 
+    split = sorted(chan for chan, sets in set_map.items()
+                   if len({str(v[0]) for v in
+                           dict(sets[0].sockets)["input"].values() if v}) > 1)
+
     msg = "linked {0}, hid {1} pipe(s)".format(linked, hidden)
+    if split:
+        msg += (" | SPLIT FEED (Input and Matte from different nodes -- "
+                "was a Set half-rewired by hand?): " + ", ".join(split))
     if missing:
         msg += " | no Set for: {0}".format(", ".join(sorted(set(missing))))
     if dupes:
@@ -893,32 +900,26 @@ def _multi_set_dialog(rows):
     _console("Created {0} Set(s): {1}".format(len(made), ", ".join(made)))
 
 
-def make_get_dialog(selection):
-    """GUI: pick an existing channel, create a tinted, pre-linked GET_ MUX."""
+def _channel_picker_dialog(title, header_text, ok_label):
+    """Modal grouped channel picker (channels under their feeding node,
+    type-to-filter). Returns the chosen channel name, or None."""
     set_map = _muxes_by_channel(SET_PREFIX)
     if not set_map:
-        _console("Make Get: no Set nodes yet -- create a Set first.")
-        return
+        _console("No Set nodes yet -- create a Set first.")
+        return None
     get_map = _gets_by_channel()
-
-    # capture where the menu was invoked BEFORE the dialog opens -- by the
-    # time it closes the mouse has moved to the dialog's buttons
-    try:
-        click_pos = tuple(flame.batch.cursor_position)
-    except Exception:
-        click_pos = None
 
     QtCore, QtGui, QtWidgets = _qt()
 
     dlg = QtWidgets.QDialog()
-    dlg.setWindowTitle("FORGE — Wireless Get")
+    dlg.setWindowTitle(title)
     dlg.setMinimumSize(420, 440)
     dlg.setStyleSheet(FORGE_SS)
     lay = QtWidgets.QVBoxLayout(dlg)
     lay.setContentsMargins(16, 14, 16, 14)
     lay.setSpacing(10)
 
-    lay.addWidget(_header(QtWidgets, "Create Get"))
+    lay.addWidget(_header(QtWidgets, header_text))
 
     filt = QtWidgets.QLineEdit()
     filt.setPlaceholderText("filter by channel or source node...")
@@ -985,7 +986,7 @@ def make_get_dialog(selection):
     cancel.setStyleSheet(BTN_QUIET)
     cancel.clicked.connect(dlg.reject)
     cancel.setAutoDefault(False)
-    ok = QtWidgets.QPushButton("Create Get")
+    ok = QtWidgets.QPushButton(ok_label)
     ok.setStyleSheet(BTN_PRIMARY)
     ok.clicked.connect(dlg.accept)
     ok.setAutoDefault(True)
@@ -995,13 +996,111 @@ def make_get_dialog(selection):
     lay.addLayout(btns)
 
     if dlg.exec() != QtWidgets.QDialog.Accepted or tree.currentItem() is None:
-        return
-    chan = tree.currentItem().data(0, QtCore.Qt.UserRole)
+        return None
+    return tree.currentItem().data(0, QtCore.Qt.UserRole) or None
+
+
+def make_get_dialog(selection):
+    """GUI: pick an existing channel, create a tinted, pre-linked GET_ MUX."""
+    # capture where the menu was invoked BEFORE the dialog opens -- by the
+    # time it closes the mouse has moved to the dialog's buttons
+    try:
+        click_pos = tuple(flame.batch.cursor_position)
+    except Exception:
+        click_pos = None
+    chan = _channel_picker_dialog("FORGE — Wireless Get", "Create Get",
+                                  "Create Get")
     if not chan:
         return
     near = selection[0] if selection else None
     create_get(chan, near_node=near, at=click_pos)
     _console("Get '{0}' created, linked and hidden.".format(chan))
+
+
+def change_set_input_dialog(selection):
+    """GUI: feed an existing channel from a different source node.
+
+    Select only the NEW source -- the channel comes from the picker, so the
+    Set can stay wherever it lives (that being the point of wireless). The
+    swap is atomic: both pipes move together, so no half-rewired Set can be
+    left with RGB from one node and matte from another. Sources with no
+    usable outputs, or with several output pairs, warn and bail.
+    """
+    src = None
+    for n in (selection or []):
+        nm = _node_name(n)
+        if _is_mux(n) and (nm.startswith(SET_PREFIX) or _get_channel_of(nm)):
+            continue
+        src = n
+        break
+    if src is None:
+        _console("Change Set input: select the new source node first.")
+        return
+    src_t = str(_val(src.type)).upper()
+    try:
+        outs = list(dict(src.sockets)["output"].keys())
+    except Exception:
+        outs = []
+    pairs = [(sock, None) for sock in outs] if src_t == "GROUP"         else _stem_pairs(outs)
+    if not pairs:
+        _console("Change Set input: '{0}' has no usable outputs."
+                 .format(_node_name(src)))
+        return
+    if len(pairs) > 1:
+        _console("Change Set input: '{0}' has {1} output pairs -- select a "
+                 "single-output source (for multichannel sources, rewire by "
+                 "hand or Make Set).".format(_node_name(src), len(pairs)))
+        return
+    rgb, matte = pairs[0]
+
+    chan = _channel_picker_dialog(
+        "FORGE — Change Set Input",
+        "Feed a channel from '{0}'".format(_node_name(src)),
+        "Change Input")
+    if not chan:
+        return
+    sets = _muxes_by_channel(SET_PREFIX).get(chan)
+    if not sets:
+        return
+    set_node = sets[0]
+
+    # snapshot the current feed for best-effort restore on failure
+    old_feeds = {}
+    for sock_name, dests in dict(set_node.sockets)["input"].items():
+        if dests:
+            old_feeds[sock_name] = str(dests[0])
+    for sock_name in ("Input_0", "Matte_0"):
+        try:
+            flame.batch.disconnect_node(set_node, sock_name)
+        except Exception:
+            pass
+
+    if src_t == "GROUP":
+        ok = _wire_group_set(src, rgb, set_node)
+    else:
+        flame.batch.connect_nodes(src, rgb, set_node, "Input_0")
+        if matte:
+            flame.batch.connect_nodes(src, matte, set_node, "Matte_0")
+        ok = _set_is_wired(set_node)
+
+    if not ok:
+        by_name = {_node_name(n): n for n in flame.batch.nodes}
+        for sock_name, prev_nm in old_feeds.items():
+            prev = by_name.get(prev_nm)
+            if prev is None:
+                continue
+            prev_rgb, prev_matte = _source_outputs(prev)
+            use = prev_matte if (sock_name == "Matte_0" and prev_matte)                 else prev_rgb
+            try:
+                flame.batch.connect_nodes(prev, use, set_node, sock_name)
+            except Exception:
+                pass
+        _console("Change Set input FAILED: '{0}' of '{1}' can't feed a MUX "
+                 "-- previous wiring restored (best effort).".format(
+                     rgb, _node_name(src)))
+        return
+    _console("Channel '{0}' now fed by '{1}'{2}.".format(
+        chan, _node_name(src), " (RGB+matte)" if matte else ""))
 
 
 def rename_channel_dialog(selection):
@@ -1110,6 +1209,7 @@ def get_batch_custom_ui_actions():
             "actions": [
                 {"name": "Make Set from selected...", "execute": _safe(make_set_dialog)},
                 {"name": "Make Get...",               "execute": _safe(make_get_dialog)},
+                {"name": "Change Set input...",       "execute": _safe(change_set_input_dialog)},
                 {"name": "Rename channel...",         "execute": _safe(rename_channel_dialog)},
                 {"name": "Relink all",                "execute": _safe(relink)},
             ],

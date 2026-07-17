@@ -90,6 +90,21 @@ colour chips, double-click, and filter+Enter all work. The Get lands at the
 spot where you right-clicked, pre-linked on both pipes, tinted, and hidden.
 Unwired Sets group under `(unwired)`.
 
+### Change Set input…
+
+Re-feed an existing channel from a different node — select only the **new
+source** (the Set can stay wherever it lives; that's the point of
+wireless), pick the channel from the same grouped picker (which shows each
+channel's current feeder), and both pipes move atomically: RGB and its
+stem-paired matte connect together, and a source with no matte *clears*
+the old matte instead of leaving it pointing at the previous node. Sources
+with no usable outputs, or with several output pairs, warn and bail. A
+failed wire (vector output) restores the previous feed best-effort.
+
+This closes the trap manual rewiring leaves open: dragging one noodle by
+hand can leave a Set with RGB from the new node and matte from the old —
+**Relink now warns about such split feeds** whenever it runs.
+
 ### Rename channel…
 
 With any `SET_`/`GET…_` node of the channel selected (numbered Gets
