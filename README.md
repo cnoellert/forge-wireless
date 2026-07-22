@@ -45,7 +45,7 @@ Drop `forge_wireless.py` in a Flame python hooks path, e.g.
 - `/opt/Autodesk/shared/python/` (site-wide)
 - `~/.autodesk/<product>/.../python/` (per-user)
 
-then refresh python hooks in Flame. A **FORGE Wireless** submenu appears on
+then refresh python hooks in Flame. A **FORGE ▸ Wireless** submenu appears on
 right-click in the Batch schematic.
 
 ## Usage

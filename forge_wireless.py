@@ -57,7 +57,7 @@
 #   Drop this file in a Flame python hooks path, e.g.
 #     /opt/Autodesk/shared/python/            (site-wide)
 #     ~/.autodesk/<product>/... /python/      (per-user)
-#   then Flame -> refresh python hooks. A "FORGE Wireless" submenu appears on
+#   then Flame -> refresh python hooks. A "FORGE > Wireless" submenu appears on
 #   right-click in the Batch schematic.
 # ---------------------------------------------------------------------------
 
@@ -65,7 +65,7 @@ import re
 
 import flame
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -1212,13 +1212,18 @@ def _safe(fn):
 def get_batch_custom_ui_actions():
     return [
         {
-            "name": "FORGE Wireless",
+            "name": "FORGE",
             "actions": [
-                {"name": "Make Set from selected...", "execute": _safe(make_set_dialog)},
-                {"name": "Make Get...",               "execute": _safe(make_get_dialog)},
-                {"name": "Change Set input...",       "execute": _safe(change_set_input_dialog)},
-                {"name": "Rename channel...",         "execute": _safe(rename_channel_dialog)},
-                {"name": "Relink all",                "execute": _safe(relink)},
+                {
+                    "name": "Wireless",
+                    "actions": [
+                        {"name": "Make Set from selected...", "execute": _safe(make_set_dialog)},
+                        {"name": "Make Get...",               "execute": _safe(make_get_dialog)},
+                        {"name": "Change Set input...",       "execute": _safe(change_set_input_dialog)},
+                        {"name": "Rename channel...",         "execute": _safe(rename_channel_dialog)},
+                        {"name": "Relink all",                "execute": _safe(relink)},
+                    ],
+                }
             ],
         }
     ]
