@@ -36,19 +36,24 @@
 #   after creation: outputs that can't feed a MUX (motion-vector pipes are
 #   a distinct link type) are skipped instead of leaving dead Sets.
 #
-# Change Set input
-#   Re-feed a channel from a different node: select only the NEW source,
-#   pick the channel (grouped picker shows each channel's current feeder),
-#   and both pipes swap atomically -- matte cleared when the new source
-#   has none. Relink warns about SPLIT FEED Sets (Input and Matte from
-#   different nodes), the trap manual half-rewiring leaves behind.
+# Switching (the two halves of one idea -- hence one verb)
+#   Switch Set to selection: re-feed a channel from a different node.
+#     Select only the NEW source, pick the channel (the grouped picker
+#     shows each channel's current feeder), and both pipes swap atomically
+#     -- matte cleared when the new source has none. Relink warns about
+#     SPLIT FEED Sets (Input and Matte from different nodes), the trap
+#     manual half-rewiring leaves behind.
+#   Switch Get to channel: re-point an existing Get at a DIFFERENT channel.
+#     Select the Get(s), pick the new channel, and only the Get's inputs
+#     and name change -- everything downstream stays wired, so a whole
+#     branch swaps source in one click. Renumbers into the destination
+#     channel (GET_bg -> GET2_fg) and re-tints from the new Set's colour.
 #
-# Switch Get
-#   The mirror image: re-point an existing Get at a DIFFERENT channel.
-#   Select the Get(s), pick the new channel, and only the Get's inputs and
-#   name change -- everything downstream stays wired, so a whole branch
-#   swaps source in one click. Renumbers into the destination channel
-#   (GET_bg -> GET2_fg) and re-tints from the new Set's colour.
+# Menu
+#   Six actions in three pairs -- create (Make Set/Get), re-point (Switch
+#   Set/Get), maintain (Rename channel, Relink all). isEnabled greys what
+#   the current selection can't run, so the four different selection
+#   requirements are visible instead of folklore.
 #
 # Verified against Flame 2026.2 Python API (details in README):
 #   node.type reads "MUX"; hide_input / schematic_colour are real dynamic
@@ -72,7 +77,7 @@ import re
 
 import flame
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -167,6 +172,17 @@ def _get_channel_of(name):
     if not m or not m.group(2):
         return None
     return re.sub(r"__\d+$", "", m.group(2))
+
+def _is_wireless_node(node):
+    """True for this script's own SET_/GET… MUXes.
+
+    They're excluded everywhere a real upstream is wanted -- a Set fed by a
+    Get would be a wireless channel carrying a wireless channel.
+    """
+    if not _is_mux(node):
+        return False
+    nm = _node_name(node)
+    return nm.startswith(SET_PREFIX) or bool(_get_channel_of(nm))
 
 def _gets_by_channel():
     """channel -> [nodes] for every Get MUX in the batch."""
@@ -304,7 +320,7 @@ def _expand_selection(selection):
         nm = _node_name(node)
         if t != "GROUP" and nm in hidden:
             continue
-        if t == MUX_TYPE and (nm.startswith(SET_PREFIX) or _get_channel_of(nm)):
+        if _is_wireless_node(node):
             continue
         try:
             outs = list(dict(node.sockets)["output"].keys())
@@ -356,8 +372,7 @@ def _wire_group_set(group, sock, set_node):
     for n in flame.batch.nodes:
         t = str(_val(n.type)).upper()
         nm = _node_name(n)
-        if t in ("GROUP", "COMPASS") or t == MUX_TYPE and (
-                nm.startswith(SET_PREFIX) or _get_channel_of(nm)):
+        if t in ("GROUP", "COMPASS") or _is_wireless_node(n):
             continue
         if n is set_node:
             continue
@@ -1065,24 +1080,20 @@ def make_get_dialog(selection):
     _console("Get '{0}' created, linked and hidden.".format(chan))
 
 
-def change_set_input_dialog(selection):
-    """GUI: feed an existing channel from a different source node.
+def switch_set_dialog(selection):
+    """GUI: re-point a channel's Set at a different source node.
 
-    Select only the NEW source -- the channel comes from the picker, so the
-    Set can stay wherever it lives (that being the point of wireless). The
-    swap is atomic: both pipes move together, so no half-rewired Set can be
-    left with RGB from one node and matte from another. Sources with no
-    usable outputs, or with several output pairs, warn and bail.
+    The mirror of switch_get_dialog: this changes what FEEDS a channel,
+    that one changes which channel a Get READS. Select only the NEW source
+    -- the channel comes from the picker, so the Set can stay wherever it
+    lives (that being the point of wireless). The swap is atomic: both
+    pipes move together, so no half-rewired Set can be left with RGB from
+    one node and matte from another. Sources with no usable outputs, or
+    with several output pairs, warn and bail.
     """
-    src = None
-    for n in (selection or []):
-        nm = _node_name(n)
-        if _is_mux(n) and (nm.startswith(SET_PREFIX) or _get_channel_of(nm)):
-            continue
-        src = n
-        break
+    src = next((n for n in (selection or []) if not _is_wireless_node(n)), None)
     if src is None:
-        _console("Change Set input: select the new source node first.")
+        _console("Switch Set: select the new source node first.")
         return
     src_t = str(_val(src.type)).upper()
     try:
@@ -1091,11 +1102,11 @@ def change_set_input_dialog(selection):
         outs = []
     pairs = [(sock, None) for sock in outs] if src_t == "GROUP"         else _stem_pairs(outs)
     if not pairs:
-        _console("Change Set input: '{0}' has no usable outputs."
+        _console("Switch Set: '{0}' has no usable outputs."
                  .format(_node_name(src)))
         return
     if len(pairs) > 1:
-        _console("Change Set input: '{0}' has {1} output pairs -- select a "
+        _console("Switch Set: '{0}' has {1} output pairs -- select a "
                  "single-output source (for multichannel sources, rewire by "
                  "hand or Make Set).".format(_node_name(src), len(pairs)))
         return
@@ -1143,7 +1154,7 @@ def change_set_input_dialog(selection):
                 flame.batch.connect_nodes(prev, use, set_node, sock_name)
             except Exception:
                 pass
-        _console("Change Set input FAILED: '{0}' of '{1}' can't feed a MUX "
+        _console("Switch Set FAILED: '{0}' of '{1}' can't feed a MUX "
                  "-- previous wiring restored (best effort).".format(
                      rgb, _node_name(src)))
         return
@@ -1154,7 +1165,7 @@ def change_set_input_dialog(selection):
 def switch_get_dialog(selection):
     """GUI: re-point selected Get node(s) at a different channel's Set.
 
-    The counterpart to Change Set input: instead of changing what feeds a
+    The counterpart to Switch Set: instead of changing what feeds a
     channel, this changes WHICH channel a Get reads. Everything downstream
     of the Get stays wired, so a whole branch swaps source in one click.
     Several Gets can be switched at once (handy for A/B-ing a comp branch).
@@ -1206,12 +1217,7 @@ def switch_get_dialog(selection):
 
 def rename_channel_dialog(selection):
     """GUI: rename the channel of the selected SET_/GET_ node everywhere."""
-    node = None
-    for n in (selection or []):
-        nm = _node_name(n)
-        if _is_mux(n) and (nm.startswith(SET_PREFIX) or _get_channel_of(nm)):
-            node = n
-            break
+    node = next((n for n in (selection or []) if _is_wireless_node(n)), None)
     if node is None:
         _console("Rename channel: select a SET_ or GET_ node first.")
         return
@@ -1303,19 +1309,65 @@ def _safe(fn):
     wrapped.__name__ = getattr(fn, "__name__", "action")
     return wrapped
 
+def _pred(fn):
+    """Guard an isEnabled callback: FAIL OPEN.
+
+    These run on every right-click, so a raising predicate would grey out
+    (or worse, vanish) a working action with no visible cause. Any error
+    means 'enabled' -- the action's own dialog reports the real problem.
+    """
+    def wrapped(selection=None):
+        try:
+            return bool(fn(selection or []))
+        except Exception:
+            return True
+    return wrapped
+
+# Predicates read ONLY the selection, never the batch: they fire on every
+# menu popup, and a full flame.batch.nodes scan would tax a heavy schematic
+# for a label's sake.
+
+def _sel_has_source(selection):
+    """A node that could feed a Set (anything but our own SET_/GET…)."""
+    return any(not _is_wireless_node(n) for n in selection)
+
+def _sel_has_get(selection):
+    return any(_is_mux(n) and _get_channel_of(_node_name(n)) for n in selection)
+
+def _sel_has_channel_node(selection):
+    return any(_is_wireless_node(n) for n in selection)
+
 def get_batch_custom_ui_actions():
+    """Six actions in three pairs: create, re-point, maintain.
+
+    'Make/Switch' + 'Set/Get' is the whole vocabulary -- Switch Set and
+    Switch Get are the same operation on opposite ends of the wire, so they
+    share a verb. Every label names what it acts on or from, and isEnabled
+    greys anything the current selection can't run, which is what makes the
+    four different selection requirements discoverable instead of folklore.
+    """
     return [
         {"name": "FORGE", "hierarchy": [], "actions": []},
         {
             "name": "Wireless",
             "hierarchy": ["FORGE"],
             "actions": [
-                {"name": "Make Set from selected...", "execute": _safe(make_set_dialog)},
-                {"name": "Make Get...",               "execute": _safe(make_get_dialog)},
-                {"name": "Switch Get...",             "execute": _safe(switch_get_dialog)},
-                {"name": "Change Set input...",       "execute": _safe(change_set_input_dialog)},
-                {"name": "Rename channel...",         "execute": _safe(rename_channel_dialog)},
-                {"name": "Relink all",                "execute": _safe(relink)},
+                {"name": "Make Set from selection...",
+                 "execute": _safe(make_set_dialog),
+                 "isEnabled": _pred(_sel_has_source)},
+                {"name": "Make Get...",
+                 "execute": _safe(make_get_dialog)},
+                {"name": "Switch Set to selection...",
+                 "execute": _safe(switch_set_dialog),
+                 "isEnabled": _pred(_sel_has_source)},
+                {"name": "Switch Get to channel...",
+                 "execute": _safe(switch_get_dialog),
+                 "isEnabled": _pred(_sel_has_get)},
+                {"name": "Rename channel...",
+                 "execute": _safe(rename_channel_dialog),
+                 "isEnabled": _pred(_sel_has_channel_node)},
+                {"name": "Relink all",
+                 "execute": _safe(relink)},
             ],
         },
     ]

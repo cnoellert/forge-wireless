@@ -48,9 +48,34 @@ Drop `forge_wireless.py` in a Flame python hooks path, e.g.
 then refresh python hooks in Flame. A **FORGE ▸ Wireless** submenu appears on
 right-click in the Batch schematic.
 
+## Menu
+
+Six actions in three pairs — **create**, **re-point**, **maintain**:
+
+| Action | Select first |
+| --- | --- |
+| Make Set from selection… | the source node(s) to broadcast |
+| Make Get… | nothing |
+| Switch Set to selection… | the *new* source node |
+| Switch Get to channel… | the Get node(s) to re-point |
+| Rename channel… | any `SET_`/`GET…_` node of the channel |
+| Relink all | nothing |
+
+`Make`/`Switch` × `Set`/`Get` is the entire vocabulary. Switch Set and Switch
+Get share a verb because they are the same operation on opposite ends of the
+wire: one changes what *feeds* a channel, the other changes which channel a Get
+*reads*.
+
+Each action carries an `isEnabled` callback, so anything the current selection
+can't run is **greyed out** — the four different selection requirements are
+visible in the menu instead of being folklore. The predicates read only the
+selection, never the batch: they fire on every right-click, and scanning all
+nodes for a label would tax a heavy schematic. They also fail *open* — a
+raising predicate greys nothing, so a bug can't hide a working action.
+
 ## Usage
 
-### Make Set from selected…
+### Make Set from selection…
 
 A single node with one output pair gets a simple dialog: channel name
 (pre-filled from the node) and a colour swatch row with the next free
@@ -90,22 +115,7 @@ colour chips, double-click, and filter+Enter all work. The Get lands at the
 spot where you right-clicked, pre-linked on both pipes, tinted, and hidden.
 Unwired Sets group under `(unwired)`.
 
-### Switch Get…
-
-Re-point an existing Get at a **different channel** — the mirror image of
-Change Set input. Select the `GET…_` node(s), pick the new channel from the
-grouped picker (which opens with the Get's current channel highlighted), and
-only the Get's inputs and name change: everything **downstream stays wired**,
-so a whole comp branch swaps its source in one click. The node renumbers into
-the destination channel (`GET_bg` → `GET2_fg` if `GET_fg` is taken), rewires
-both pipes to the new Set, re-tints from that Set's colour, and re-hides.
-
-Several Gets can be switched at once — select them all and they land on the
-same channel, which makes A/B-ing a branch a two-click round trip. Picking the
-channel a Get is already on is a no-op (it does *not* renumber the node
-against itself).
-
-### Change Set input…
+### Switch Set to selection…
 
 Re-feed an existing channel from a different node — select only the **new
 source** (the Set can stay wherever it lives; that's the point of
@@ -119,6 +129,21 @@ failed wire (vector output) restores the previous feed best-effort.
 This closes the trap manual rewiring leaves open: dragging one noodle by
 hand can leave a Set with RGB from the new node and matte from the old —
 **Relink now warns about such split feeds** whenever it runs.
+
+### Switch Get to channel…
+
+Re-point an existing Get at a **different channel** — the mirror image of
+Switch Set. Select the `GET…_` node(s), pick the new channel from the
+grouped picker (which opens with the Get's current channel highlighted), and
+only the Get's inputs and name change: everything **downstream stays wired**,
+so a whole comp branch swaps its source in one click. The node renumbers into
+the destination channel (`GET_bg` → `GET2_fg` if `GET_fg` is taken), rewires
+both pipes to the new Set, re-tints from that Set's colour, and re-hides.
+
+Several Gets can be switched at once — select them all and they land on the
+same channel, which makes A/B-ing a branch a two-click round trip. Picking the
+channel a Get is already on is a no-op (it does *not* renumber the node
+against itself).
 
 ### Rename channel…
 
@@ -174,6 +199,10 @@ Hard-won findings that apply to any Flame hook, not just this one:
   object identity, and `node.sockets` on the *neighbours* reports the new
   name immediately (verified live). This is what lets Switch Get rename a
   Get out from under a whole downstream branch without rewiring it.
+- Custom-UI action dicts take `isVisible` and `isEnabled` callbacks, both
+  `(selection) -> bool`, alongside `execute`, `hierarchy`, and
+  `minimumVersion`/`maximumVersion`. A `separator` key is cited in the wider
+  ecosystem but is **not** confirmed — don't reach for dividers.
 - Menu callbacks swallow exceptions silently — wrap every action to print
   the traceback and surface the error in the Flame console, or bugs become
   invisible no-ops.
