@@ -90,6 +90,21 @@ colour chips, double-click, and filter+Enter all work. The Get lands at the
 spot where you right-clicked, pre-linked on both pipes, tinted, and hidden.
 Unwired Sets group under `(unwired)`.
 
+### Switch Get…
+
+Re-point an existing Get at a **different channel** — the mirror image of
+Change Set input. Select the `GET…_` node(s), pick the new channel from the
+grouped picker (which opens with the Get's current channel highlighted), and
+only the Get's inputs and name change: everything **downstream stays wired**,
+so a whole comp branch swaps its source in one click. The node renumbers into
+the destination channel (`GET_bg` → `GET2_fg` if `GET_fg` is taken), rewires
+both pipes to the new Set, re-tints from that Set's colour, and re-hides.
+
+Several Gets can be switched at once — select them all and they land on the
+same channel, which makes A/B-ing a branch a two-click round trip. Picking the
+channel a Get is already on is a no-op (it does *not* renumber the node
+against itself).
+
 ### Change Set input…
 
 Re-feed an existing channel from a different node — select only the **new
@@ -155,6 +170,10 @@ Hard-won findings that apply to any Flame hook, not just this one:
 - `flame.batch.disconnect_node(node, "Input_0")` disconnects an input.
 - Node names are unique per container; Flame coerces `-`, `.`, spaces, etc.
   to `_` on assignment.
+- Renaming a node **does not break its connections** — links are held by
+  object identity, and `node.sockets` on the *neighbours* reports the new
+  name immediately (verified live). This is what lets Switch Get rename a
+  Get out from under a whole downstream branch without rewiring it.
 - Menu callbacks swallow exceptions silently — wrap every action to print
   the traceback and surface the error in the Flame console, or bugs become
   invisible no-ops.

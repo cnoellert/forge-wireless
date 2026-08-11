@@ -43,6 +43,13 @@
 #   has none. Relink warns about SPLIT FEED Sets (Input and Matte from
 #   different nodes), the trap manual half-rewiring leaves behind.
 #
+# Switch Get
+#   The mirror image: re-point an existing Get at a DIFFERENT channel.
+#   Select the Get(s), pick the new channel, and only the Get's inputs and
+#   name change -- everything downstream stays wired, so a whole branch
+#   swaps source in one click. Renumbers into the destination channel
+#   (GET_bg -> GET2_fg) and re-tints from the new Set's colour.
+#
 # Verified against Flame 2026.2 Python API (details in README):
 #   node.type reads "MUX"; hide_input / schematic_colour are real dynamic
 #   attributes (hasattr() is useless -- PyNode resolves any name; the true
@@ -65,7 +72,7 @@ import re
 
 import flame
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -609,6 +616,34 @@ def _link_gets(get_map, set_map=None):
                 pass
     return linked, hidden, missing
 
+def switch_get(get_node, new_channel, set_map=None):
+    """Re-point an existing Get at a different channel's Set.
+
+    Only the Get's INPUTS and name change -- everything downstream of the
+    Get keeps its connection, so a switch swaps what feeds a whole branch
+    without touching the branch. The node is renamed to the new channel
+    (renumbered if that channel already has Gets), rewired to the new Set,
+    re-tinted from the new Set's colour and re-hidden.
+
+    Returns True if the channel exists and the Get was re-pointed.
+    """
+    if set_map is None:
+        set_map = _muxes_by_channel(SET_PREFIX)
+    if new_channel not in set_map:
+        return False
+    for sock_name in ("Input_0", "Matte_0"):
+        try:
+            flame.batch.disconnect_node(get_node, sock_name)
+        except Exception:
+            pass
+    # renaming to the SAME channel would renumber it against itself
+    # (GET_bg -> GET2_bg), so only rename on a real channel change
+    if _get_channel_of(_node_name(get_node)) != new_channel:
+        get_node.name = _free_get_name(new_channel)
+    _link_gets({new_channel: [get_node]}, set_map)
+    return True
+
+
 def relink(selection=None):
     """Re-wire every Get to its Set, reassert colours, hide the pipes."""
     set_map = _muxes_by_channel(SET_PREFIX)
@@ -907,9 +942,10 @@ def _multi_set_dialog(rows):
     _console("Created {0} Set(s): {1}".format(len(made), ", ".join(made)))
 
 
-def _channel_picker_dialog(title, header_text, ok_label):
+def _channel_picker_dialog(title, header_text, ok_label, preselect=None):
     """Modal grouped channel picker (channels under their feeding node,
-    type-to-filter). Returns the chosen channel name, or None."""
+    type-to-filter). `preselect` starts the cursor on that channel instead
+    of the first one. Returns the chosen channel name, or None."""
     set_map = _muxes_by_channel(SET_PREFIX)
     if not set_map:
         _console("No Set nodes yet -- create a Set first.")
@@ -942,6 +978,7 @@ def _channel_picker_dialog(title, header_text, ok_label):
     tree = QtWidgets.QTreeWidget()
     tree.setHeaderHidden(True)
     first_chan_item = [None]
+    preselect_item = [None]
     for src in sorted(groups, key=str.lower):
         top = QtWidgets.QTreeWidgetItem(["{0}   ({1})".format(src, len(groups[src]))])
         top.setFlags(QtCore.Qt.ItemIsEnabled)
@@ -958,10 +995,14 @@ def _channel_picker_dialog(title, header_text, ok_label):
             top.addChild(item)
             if first_chan_item[0] is None:
                 first_chan_item[0] = item
+            if chan == preselect:
+                preselect_item[0] = item
         tree.addTopLevelItem(top)
     tree.expandAll()
-    if first_chan_item[0] is not None:
-        tree.setCurrentItem(first_chan_item[0])
+    start = preselect_item[0] or first_chan_item[0]
+    if start is not None:
+        tree.setCurrentItem(start)
+        tree.scrollToItem(start)
     tree.itemDoubleClicked.connect(
         lambda item, col: item.data(0, QtCore.Qt.UserRole) and dlg.accept())
     lay.addWidget(tree, 1)
@@ -1110,6 +1151,59 @@ def change_set_input_dialog(selection):
         chan, _node_name(src), " (RGB+matte)" if matte else ""))
 
 
+def switch_get_dialog(selection):
+    """GUI: re-point selected Get node(s) at a different channel's Set.
+
+    The counterpart to Change Set input: instead of changing what feeds a
+    channel, this changes WHICH channel a Get reads. Everything downstream
+    of the Get stays wired, so a whole branch swaps source in one click.
+    Several Gets can be switched at once (handy for A/B-ing a comp branch).
+    """
+    gets = [n for n in (selection or [])
+            if _is_mux(n) and _get_channel_of(_node_name(n))]
+    if not gets:
+        _console("Switch Get: select the GET_ node(s) you want to re-point "
+                 "first.")
+        return
+    current = sorted({_get_channel_of(_node_name(g)) for g in gets})
+
+    if len(gets) == 1:
+        header = "Re-point '{0}' to another channel".format(
+            _node_name(gets[0]))
+    else:
+        header = "Re-point {0} Gets ({1}) to another channel".format(
+            len(gets), ", ".join(current))
+
+    chan = _channel_picker_dialog(
+        "FORGE — Switch Get", header, "Switch Get",
+        preselect=current[0] if len(current) == 1 else None)
+    if not chan:
+        return
+
+    set_map = _muxes_by_channel(SET_PREFIX)
+    moved, unchanged, failed = [], 0, []
+    for g in gets:
+        old = _get_channel_of(_node_name(g))
+        if old == chan:
+            unchanged += 1
+            continue
+        if switch_get(g, chan, set_map):
+            moved.append("{0} -> {1}".format(old, _node_name(g)))
+        else:
+            failed.append(_node_name(g))
+
+    if failed:
+        _console("Switch Get FAILED (no Set for '{0}'): {1}".format(
+            chan, ", ".join(failed)))
+        return
+    if not moved:
+        _console("Switch Get: {0} Get(s) already on '{1}' -- nothing to do."
+                 .format(unchanged, chan))
+        return
+    _console("Switched {0} Get(s) to '{1}': {2}".format(
+        len(moved), chan, ", ".join(moved)))
+
+
 def rename_channel_dialog(selection):
     """GUI: rename the channel of the selected SET_/GET_ node everywhere."""
     node = None
@@ -1211,21 +1305,19 @@ def _safe(fn):
 
 def get_batch_custom_ui_actions():
     return [
+        {"name": "FORGE", "hierarchy": [], "actions": []},
         {
-            "name": "FORGE",
+            "name": "Wireless",
+            "hierarchy": ["FORGE"],
             "actions": [
-                {
-                    "name": "Wireless",
-                    "actions": [
-                        {"name": "Make Set from selected...", "execute": _safe(make_set_dialog)},
-                        {"name": "Make Get...",               "execute": _safe(make_get_dialog)},
-                        {"name": "Change Set input...",       "execute": _safe(change_set_input_dialog)},
-                        {"name": "Rename channel...",         "execute": _safe(rename_channel_dialog)},
-                        {"name": "Relink all",                "execute": _safe(relink)},
-                    ],
-                }
+                {"name": "Make Set from selected...", "execute": _safe(make_set_dialog)},
+                {"name": "Make Get...",               "execute": _safe(make_get_dialog)},
+                {"name": "Switch Get...",             "execute": _safe(switch_get_dialog)},
+                {"name": "Change Set input...",       "execute": _safe(change_set_input_dialog)},
+                {"name": "Rename channel...",         "execute": _safe(rename_channel_dialog)},
+                {"name": "Relink all",                "execute": _safe(relink)},
             ],
-        }
+        },
     ]
 
 def batch_setup_loaded(info):
