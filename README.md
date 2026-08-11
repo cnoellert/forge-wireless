@@ -201,7 +201,10 @@ Hard-won findings that apply to any Flame hook, not just this one:
   Get out from under a whole downstream branch without rewiring it.
 - Custom-UI action dicts take `isVisible` and `isEnabled` callbacks, both
   `(selection) -> bool`, alongside `execute`, `hierarchy`, and
-  `minimumVersion`/`maximumVersion`. A `separator` key is cited in the wider
+  `minimumVersion`/`maximumVersion`. `isEnabled` returning False **visibly
+  greys the item** in the Batch right-click menu rather than merely
+  suppressing the callback (verified live, 2026.2.2) — so it's a real
+  affordance, not just a guard. A `separator` key is cited in the wider
   ecosystem but is **not** confirmed — don't reach for dividers.
 - Menu callbacks swallow exceptions silently — wrap every action to print
   the traceback and surface the error in the Flame console, or bugs become
