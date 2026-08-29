@@ -48,6 +48,13 @@ Drop `forge_wireless.py` in a Flame python hooks path, e.g.
 then refresh python hooks in Flame. A **FORGE ▸ Wireless** submenu appears on
 right-click in the Batch schematic.
 
+For the [Wireless HUD](#wireless-hud), also drop `forge_hud.py` (from the
+[forge-hud](https://github.com/cnoellert/forge-hud) repo) into the same
+hooks path — a single file, no other dependencies. It is **optional**:
+without it the HUD toggle reports the missing file and every other feature
+works. Never keep an older `forge_hud.py` over a newer one; other FORGE
+tools (forge-takes) share the same copy.
+
 ## Menu
 
 Seven actions — three pairs (**create**, **re-point**, **maintain**) plus

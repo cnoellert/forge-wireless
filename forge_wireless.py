@@ -94,7 +94,7 @@ import re
 
 import flame
 
-__version__ = "1.6.2"
+__version__ = "1.6.3"
 
 # --- configuration ---------------------------------------------------------
 
@@ -1346,9 +1346,17 @@ _LEGACY_HUD_STATE = os.path.join(os.path.expanduser("~"),
 
 
 def _forge_hud():
-    """The shared dock library, or None where it isn't installed."""
+    """The shared dock library, or None where it isn't installed.
+
+    A future forge_hud that breaks the v1 contract (register/toggle/
+    ensure/update) must bump its major version; an incompatible major is
+    treated exactly like absence -- the HUD degrades, the menu works.
+    """
     try:
         import forge_hud
+        major = str(getattr(forge_hud, "__version__", "0")).split(".")[0]
+        if major != "1":
+            return None
         return forge_hud
     except Exception:
         return None
