@@ -50,7 +50,8 @@ right-click in the Batch schematic.
 
 ## Menu
 
-Six actions in three pairs — **create**, **re-point**, **maintain**:
+Seven actions — three pairs (**create**, **re-point**, **maintain**) plus
+the HUD toggle:
 
 | Action | Select first |
 | --- | --- |
@@ -60,6 +61,7 @@ Six actions in three pairs — **create**, **re-point**, **maintain**:
 | Switch Get to channel… | the Get node(s) to re-point |
 | Rename channel… | any `SET_`/`GET…_` node of the channel |
 | Relink all | nothing |
+| Wireless HUD | nothing |
 
 `Make`/`Switch` × `Set`/`Get` is the entire vocabulary. Switch Set and Switch
 Get share a verb because they are the same operation on opposite ends of the
@@ -158,6 +160,38 @@ Re-wires every Get to its Set (both pipes), reasserts colours and tints,
 hides the pipes, and reports duplicates and missing Sets. Runs
 automatically when a batch setup loads. Relink never moves nodes, so manual
 arrangements stick.
+
+### Wireless HUD
+
+A small frameless, always-on-top pill (same family as the forge-takes HUD):
+
+    ● wireless   12 ch · 31 gets ▾
+
+**The pill is a channel palette.** Click it and every channel appears in a
+popup, grouped under its feeding source node and swatched in its channel
+colour, each with its get-count — **click a channel to drop a linked,
+tinted, hidden Get**. With many channels this turns the most frequent
+action (right-click → FORGE → Wireless → Make Get… → picker → OK) into two
+clicks. The popup also carries *Relink all* and *Hide HUD*.
+
+Placement of a HUD-dropped Get: next to the **selected node** if there is
+one (the deliberate signal of where you're working), otherwise at the
+schematic cursor — which maps the live mouse position even over a floating
+window, so a pill parked over the schematic drops Gets roughly under
+itself.
+
+The **dot goes crimson** when the wireless graph has a problem — duplicate
+Set channels, Gets with no Set, or unwired Sets — and the pill's tooltip
+names the offenders. Otherwise it burns FORGE ember.
+
+Drag the pill anywhere; its position and enabled state persist per user in
+`~/.forge_wireless_hud.json`, and an enabled HUD comes back by itself after
+a Flame restart (on the first right-click or setup load). The popup is
+rebuilt from the live graph on every click so it can never go stale; the
+label refreshes after every wireless action and on setup load — only a Set
+deleted *by hand* can leave the count stale until the next interaction.
+Crash-#16 rules from forge-takes apply: standard widgets only, no `QTimer`,
+and nothing in the HUD can raise into an action.
 
 ## Groups: what to know
 

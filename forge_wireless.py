@@ -50,10 +50,24 @@
 #     channel (GET_bg -> GET2_fg) and re-tints from the new Set's colour.
 #
 # Menu
-#   Six actions in three pairs -- create (Make Set/Get), re-point (Switch
-#   Set/Get), maintain (Rename channel, Relink all). isEnabled greys what
-#   the current selection can't run, so the four different selection
-#   requirements are visible instead of folklore.
+#   Seven actions -- three pairs plus the HUD toggle: create (Make Set/Get),
+#   re-point (Switch Set/Get), maintain (Rename channel, Relink all,
+#   Wireless HUD). isEnabled greys what the current selection can't run, so
+#   the four different selection requirements are visible instead of
+#   folklore.
+#
+# HUD (the channel palette)
+#   A tiny frameless always-on-top pill (same family as the forge-takes
+#   HUD): glanceable channel/get count, crimson dot when the graph has a
+#   wireless problem (duplicate channels, Gets with no Set, unwired Sets).
+#   Click it for a popup of every channel grouped under its feeding source,
+#   swatched in the channel colour -- clicking a channel drops a linked,
+#   tinted, hidden Get (next to the selected node if there is one,
+#   otherwise at the schematic cursor, i.e. where the pill is parked).
+#   The popup is rebuilt from the live graph on every click so it can
+#   never go stale; the pill label refreshes after every wireless action
+#   and on setup load. No QTimer, standard widgets only, and nothing in
+#   the HUD may ever raise into an action.
 #
 # Verified against Flame 2026.2 Python API (details in README):
 #   node.type reads "MUX"; hide_input / schematic_colour are real dynamic
@@ -73,11 +87,13 @@
 #   right-click in the Batch schematic.
 # ---------------------------------------------------------------------------
 
+import json
+import os
 import re
 
 import flame
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -1292,6 +1308,264 @@ def rename_channel_dialog(selection):
         _console("Renamed '{0}' -> '{1}' across {2} node(s).".format(old, new, count))
 
 
+# --- HUD (channel palette pill) --------------------------------------------
+#
+# Modelled on the forge-takes HUD (same host, stable): frameless draggable
+# pill, position persisted per user, QMenu popup on click. The takes pill is
+# a mode indicator (the current take is invisible state); this one is a
+# palette -- wireless has no mode, but with many channels the fastest path
+# to a Get matters, and "which channels exist" stops being glanceable.
+# The popup rebuilds from the live graph on every click (channels can change
+# behind our back: hand-deleted Sets, setup loads), so only the pill LABEL
+# can stale -- it refreshes after every action and on setup load.
+
+HUD_MENU_SS = (
+    "QMenu { background: #23262f; color: #ccc; border: 1px solid #3a3f4f; "
+    "  font-size: 12px; padding: 4px; }"
+    "QMenu::item { padding: 5px 24px 5px 8px; border-radius: 3px; }"
+    "QMenu::item:selected { background: #2d4f7a; }"
+    "QMenu::item:disabled { color: #888; }"      # source-node group headers
+    "QMenu::separator { height: 1px; background: #3a3f4f; margin: 4px 6px; }"
+)
+
+_HUD = None
+_HUD_BOOTED = False
+_HUD_STATE_PATH = os.path.join(os.path.expanduser("~"),
+                               ".forge_wireless_hud.json")
+
+
+def _hud_state():
+    try:
+        with open(_HUD_STATE_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_hud_state(**changes):
+    try:
+        state = _hud_state()
+        state.update(changes)
+        with open(_HUD_STATE_PATH, "w") as f:
+            json.dump(state, f)
+    except Exception:
+        pass                      # a HUD must never break an action
+
+
+def _hud_place_new_get(channel):
+    """Create a Get from the HUD popup.
+
+    Placement: next to the selected node if there is one (the deliberate
+    signal of where the artist is working), else at the schematic cursor --
+    cursor_position maps the live mouse into schematic coords even when the
+    pointer is over a floating window, so a pill parked over the schematic
+    drops the Get roughly under itself.
+    """
+    near = next((n for n in flame.batch.nodes if _val(n.selected)), None)
+    at = None
+    if near is None:
+        try:
+            at = tuple(flame.batch.cursor_position)
+        except Exception:
+            at = None
+    create_get(channel, near_node=near, at=at)
+    _console("Get '{0}' created, linked and hidden.".format(channel))
+
+
+def _hud_action(fn, *args):
+    """Popup triggers land here: run, report, refresh the pill."""
+    try:
+        fn(*args)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        _console("HUD ERROR: "
+                 + traceback.format_exc().strip().splitlines()[-1])
+    update_hud()
+
+
+def _make_hud():
+    QtCore, QtGui, QtWidgets = _qt()
+
+    class Hud(QtWidgets.QWidget):
+        def __init__(self):
+            super().__init__(
+                None,
+                QtCore.Qt.FramelessWindowHint
+                | QtCore.Qt.WindowStaysOnTopHint
+                | QtCore.Qt.Tool,
+            )
+            self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+            self.setCursor(QtCore.Qt.PointingHandCursor)
+            self._press = None
+            self._offset = None
+            self._moved = False
+            self.label = QtWidgets.QLabel("", self)
+            self.label.setTextFormat(QtCore.Qt.RichText)
+            self.label.setStyleSheet(
+                "color: #ddd; font-size: 13px; font-weight: bold; "
+                "background: transparent;")
+            lay = QtWidgets.QHBoxLayout(self)
+            lay.setContentsMargins(14, 7, 14, 8)
+            lay.addWidget(self.label)
+
+        def paintEvent(self, _event):
+            p = QtGui.QPainter(self)
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            p.setBrush(QtGui.QColor(20, 22, 28, 235))
+            p.setPen(QtGui.QPen(QtGui.QColor(58, 63, 79), 1))
+            p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 9, 9)
+
+        def mousePressEvent(self, event):
+            if event.button() == QtCore.Qt.LeftButton:
+                self._press = event.globalPosition().toPoint()
+                self._offset = self._press - self.frameGeometry().topLeft()
+                self._moved = False
+
+        def mouseMoveEvent(self, event):
+            if self._press is None:
+                return
+            here = event.globalPosition().toPoint()
+            # A few pixels of slop separate "click" from "drag".
+            if not self._moved and (here - self._press).manhattanLength() < 5:
+                return
+            self._moved = True
+            self.move(here - self._offset)
+
+        def mouseReleaseEvent(self, _event):
+            if self._press is None:
+                return
+            self._press = None
+            if self._moved:
+                self._moved = False
+                _save_hud_state(x=self.x(), y=self.y())
+                return
+            self._dropdown()
+
+        def _dropdown(self):
+            """The channel palette, rebuilt live: channels grouped under
+            their feeding source, click one to drop a Get."""
+            try:
+                set_map = _muxes_by_channel(SET_PREFIX)
+                get_map = _gets_by_channel()
+            except Exception:
+                return
+            QtCore_, QtGui_, QtWidgets_ = _qt()
+            popup = QtWidgets_.QMenu(self)
+            popup.setStyleSheet(HUD_MENU_SS)
+
+            if not set_map:
+                none = popup.addAction("no channels yet — Make Set first")
+                none.setEnabled(False)
+            else:
+                groups = {}
+                for chan in set_map:
+                    src = _set_source_name(set_map[chan][0]) or "(unwired)"
+                    groups.setdefault(src, []).append(chan)
+                for src in sorted(groups, key=str.lower):
+                    hdr = popup.addAction(src)
+                    hdr.setEnabled(False)
+                    for chan in sorted(groups[src], key=str.lower):
+                        n_gets = len(get_map.get(chan, []))
+                        action = popup.addAction(
+                            "    {0}   ({1} get{2})".format(
+                                chan, n_gets, "" if n_gets == 1 else "s"))
+                        colour = _set_colour(set_map[chan][0])
+                        if colour:
+                            action.setIcon(_swatch_icon(QtGui_, colour))
+                        action.triggered.connect(
+                            lambda _checked=False, c=chan:
+                            _hud_action(_hud_place_new_get, c))
+                popup.addSeparator()
+                relink_act = popup.addAction("Relink all")
+                relink_act.triggered.connect(
+                    lambda: _hud_action(relink))
+            hide = popup.addAction("Hide HUD")
+            hide.triggered.connect(
+                lambda: (_save_hud_state(enabled=False), self.hide()))
+            popup.exec(self.mapToGlobal(self.rect().bottomLeft()))
+
+    return Hud()
+
+
+def update_hud():
+    """Refresh the pill label from the live graph; crimson dot + tooltip
+    when the wireless graph has a problem. Called after every action and on
+    setup load -- never from isEnabled predicates (those fire per
+    right-click and must stay cheap)."""
+    global _HUD
+    if _HUD is None or not _HUD.isVisible():
+        return
+    try:
+        set_map = _muxes_by_channel(SET_PREFIX)
+        get_map = _gets_by_channel()
+        n_gets = sum(len(v) for v in get_map.values())
+        dupes = sorted(c for c, ns in set_map.items() if len(ns) > 1)
+        orphans = sorted(c for c in get_map if c not in set_map)
+        unwired = sorted(c for c, ns in set_map.items()
+                         if not _set_is_wired(ns[0]))
+        bad = bool(dupes or orphans or unwired)
+        dot = '<span style="color: {0};">●</span>'.format(
+            "#C0392B" if bad else "#E87E24")
+        _HUD.label.setText(
+            '{0}&nbsp; wireless &nbsp;<span style="color: #777; '
+            'font-weight: normal;">{1} ch · {2} get{3}</span>'
+            '&nbsp;<span style="color: #666;">▾</span>'.format(
+                dot, len(set_map), n_gets, "" if n_gets == 1 else "s"))
+        problems = []
+        if dupes:
+            problems.append("duplicate Set channels: " + ", ".join(dupes))
+        if orphans:
+            problems.append("Gets with no Set: " + ", ".join(orphans))
+        if unwired:
+            problems.append("unwired Sets: " + ", ".join(unwired))
+        _HUD.setToolTip("\n".join(problems))
+        _HUD.adjustSize()
+    except Exception:
+        pass                      # a HUD must never break an action
+
+
+def ensure_hud():
+    """Show the HUD if the user has it enabled; restore its position."""
+    global _HUD
+    if not _hud_state().get("enabled"):
+        return
+    if _HUD is None:
+        _HUD = _make_hud()
+        state = _hud_state()
+        _HUD.move(int(state.get("x", 80)), int(state.get("y", 80)))
+    if not _HUD.isVisible():
+        _HUD.show()
+    update_hud()
+
+
+def _ensure_hud_once():
+    """First-popup lazy boot: bring an enabled HUD back after Flame restart
+    without a file read on every subsequent right-click."""
+    global _HUD_BOOTED
+    if _HUD_BOOTED:
+        return
+    _HUD_BOOTED = True
+    try:
+        ensure_hud()
+    except Exception:
+        pass
+
+
+def toggle_hud(selection=None):
+    """Menu action: flip the HUD."""
+    global _HUD
+    if _HUD is not None and _HUD.isVisible():
+        _save_hud_state(enabled=False)
+        _HUD.hide()
+        _console("HUD hidden.")
+        return
+    _save_hud_state(enabled=True)
+    ensure_hud()
+    _console("HUD shown — click the pill for the channel palette; "
+             "click a channel to drop a Get. Drag to park it.")
+
+
 # --- Flame hooks -----------------------------------------------------------
 
 def _safe(fn):
@@ -1306,6 +1580,12 @@ def _safe(fn):
             _console("ERROR in {0}: {1}".format(
                 getattr(fn, "__name__", "action"),
                 traceback.format_exc().strip().splitlines()[-1]))
+        finally:
+            # every action is a HUD checkpoint (no QTimer -- event-driven)
+            try:
+                update_hud()
+            except Exception:
+                pass
     wrapped.__name__ = getattr(fn, "__name__", "action")
     return wrapped
 
@@ -1338,7 +1618,7 @@ def _sel_has_channel_node(selection):
     return any(_is_wireless_node(n) for n in selection)
 
 def get_batch_custom_ui_actions():
-    """Six actions in three pairs: create, re-point, maintain.
+    """Seven actions: three pairs (create, re-point, maintain) + the HUD.
 
     'Make/Switch' + 'Set/Get' is the whole vocabulary -- Switch Set and
     Switch Get are the same operation on opposite ends of the wire, so they
@@ -1346,6 +1626,7 @@ def get_batch_custom_ui_actions():
     greys anything the current selection can't run, which is what makes the
     four different selection requirements discoverable instead of folklore.
     """
+    _ensure_hud_once()      # bring an enabled HUD back after Flame restart
     return [
         {"name": "FORGE", "hierarchy": [], "actions": []},
         {
@@ -1368,6 +1649,8 @@ def get_batch_custom_ui_actions():
                  "isEnabled": _pred(_sel_has_channel_node)},
                 {"name": "Relink all",
                  "execute": _safe(relink)},
+                {"name": "Wireless HUD",
+                 "execute": _safe(toggle_hud)},
             ],
         },
     ]
@@ -1378,3 +1661,7 @@ def batch_setup_loaded(info):
         relink()
     except Exception as e:
         _console("relink on load failed: {0}".format(e))
+    try:
+        ensure_hud()
+    except Exception:
+        pass
