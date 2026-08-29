@@ -94,7 +94,7 @@ import re
 
 import flame
 
-__version__ = "1.6.1"
+__version__ = "1.6.2"
 
 # --- configuration ---------------------------------------------------------
 
@@ -620,10 +620,20 @@ def create_get(channel, near_node=None, at=None):
     return m
 
 def _link_gets(get_map, set_map=None):
-    """Wire every Get in get_map to its Set; tint and hide. Returns stats."""
+    """Wire every Get in get_map to its Set; tint and hide. Returns stats.
+
+    Colour assignment (only for Sets that READ as colourless) is
+    stale-read-proof: the used-palette scan runs ONCE per call and every
+    assignment is recorded locally, so even if schematic_colour writes
+    don't read back within this pass the indices still cycle. Without
+    this, a load-time relink whose colour reads all came back empty could
+    assign index 0 to every channel -- collapsing a whole batch's palette
+    to uniform Ember.
+    """
     if set_map is None:
         set_map = _muxes_by_channel(SET_PREFIX)
-    linked, hidden, missing = 0, 0, []
+    linked, hidden, missing, assigned = 0, 0, [], []
+    used = None                   # palette indices; scanned once, then local
 
     for chan, gets in get_map.items():
         sets = set_map.get(chan)
@@ -633,8 +643,14 @@ def _link_gets(get_map, set_map=None):
         src = sets[0]
         colour = _set_colour(src)
         if colour is None:
-            colour = PALETTE[_next_palette_index()][1]
+            if used is None:
+                used = _used_palette_indices()
+            idx = next((i for i in range(len(PALETTE)) if i not in used),
+                       len(used) % len(PALETTE))
+            used.add(idx)
+            colour = PALETTE[idx][1]
             src.schematic_colour = colour
+            assigned.append(chan)
         tint = _lighten(colour)
         for g in gets:
             flame.batch.connect_nodes(src, "Result", g, "Input_0")
@@ -646,7 +662,7 @@ def _link_gets(get_map, set_map=None):
                 hidden += 1
             except Exception:
                 pass
-    return linked, hidden, missing
+    return linked, hidden, missing, assigned
 
 def switch_get(get_node, new_channel, set_map=None):
     """Re-point an existing Get at a different channel's Set.
@@ -682,13 +698,18 @@ def relink(selection=None):
     get_map = _gets_by_channel()
     dupes = sorted(c for c, ns in set_map.items() if len(ns) > 1)
 
-    linked, hidden, missing = _link_gets(get_map, set_map)
+    linked, hidden, missing, assigned = _link_gets(get_map, set_map)
 
     split = sorted(chan for chan, sets in set_map.items()
                    if len({str(v[0]) for v in
                            dict(sets[0].sockets)["input"].values() if v}) > 1)
 
     msg = "linked {0}, hid {1} pipe(s)".format(linked, hidden)
+    if assigned:
+        # loud on purpose: silent colour assignment is how a palette can
+        # drift without anyone noticing
+        msg += " | ASSIGNED fresh colours to {0} Set(s): {1}".format(
+            len(assigned), ", ".join(sorted(assigned)))
     if split:
         msg += (" | SPLIT FEED (Input and Matte from different nodes -- "
                 "was a Set half-rewired by hand?): " + ", ".join(split))
