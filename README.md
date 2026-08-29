@@ -188,6 +188,11 @@ names the offenders. Otherwise it burns FORGE ember. Clicking the FORGE
 chip collapses the rail to the chip plus one status dot per section, so
 even a collapsed dock shows health.
 
+The dock is **Batch-only**: it hides itself within a beat of leaving the
+Batch tab and reappears on return (forge_hud ≥ 1.3.0 — Flame emits no
+event on tab switches, so the dock watches `get_current_tab` on a guarded
+heartbeat).
+
 Drag the dock anywhere (OS-native window drag); position, collapse and
 per-section enabled state persist in `~/.forge_hud.json` (the v1.5.0
 pill's `~/.forge_wireless_hud.json` enabled flag migrates in as the
