@@ -94,7 +94,7 @@ import re
 
 import flame
 
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 
 # --- configuration ---------------------------------------------------------
 
@@ -1378,10 +1378,10 @@ def _hud_refresh():
                          if not _set_is_wired(ns[0]))
         bad = bool(dupes or orphans or unwired)
         dot = "#C0392B" if bad else "#E87E24"
-        html = ('<span style="color: {0};">●</span>&nbsp; wireless &nbsp;'
-                '<span style="color: #777; font-weight: normal;">'
-                '{1} ch · {2} get{3}</span>'.format(
-                    dot, len(set_map), n_gets, "" if n_gets == 1 else "s"))
+        # content only: forge_hud renders the dot and the WIRELESS header
+        html = ('<span style="color: #999; font-weight: normal;">'
+                '{0} ch · {1} get{2}</span>'.format(
+                    len(set_map), n_gets, "" if n_gets == 1 else "s"))
         problems = []
         if dupes:
             problems.append("duplicate Set channels: " + ", ".join(dupes))
@@ -1392,7 +1392,7 @@ def _hud_refresh():
         return {"html": html, "tooltip": "\n".join(problems),
                 "alert": bad, "dot": dot}
     except Exception:
-        return {"html": '<span style="color: #666;">wireless</span>'}
+        return {"html": '<span style="color: #666;">—</span>', "dot": "#666"}
 
 
 def _hud_menu(popup, qt):

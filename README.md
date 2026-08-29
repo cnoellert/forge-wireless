@@ -167,7 +167,7 @@ A row on the **shared FORGE dock** (`forge_hud.py`, installed alongside
 this file — other FORGE tools dock their rows into the same rail):
 
     FORGE ▾
-    ● wireless   12 ch · 31 gets
+    ● WIRELESS   12 ch · 31 gets
 
 **The row is a channel palette.** Click it and every channel appears in a
 popup, grouped under its feeding source node and swatched in its channel
