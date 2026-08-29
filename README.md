@@ -163,35 +163,41 @@ arrangements stick.
 
 ### Wireless HUD
 
-A small frameless, always-on-top pill (same family as the forge-takes HUD):
+A row on the **shared FORGE dock** (`forge_hud.py`, installed alongside
+this file — other FORGE tools dock their rows into the same rail):
 
-    ● wireless   12 ch · 31 gets ▾
+    FORGE ▾
+    ● wireless   12 ch · 31 gets
 
-**The pill is a channel palette.** Click it and every channel appears in a
+**The row is a channel palette.** Click it and every channel appears in a
 popup, grouped under its feeding source node and swatched in its channel
 colour, each with its get-count — **click a channel to drop a linked,
 tinted, hidden Get**. With many channels this turns the most frequent
 action (right-click → FORGE → Wireless → Make Get… → picker → OK) into two
-clicks. The popup also carries *Relink all* and *Hide HUD*.
+clicks. The popup also carries *Relink all* and *Hide Wireless HUD*.
 
 Placement of a HUD-dropped Get: next to the **selected node** if there is
 one (the deliberate signal of where you're working), otherwise at the
 schematic cursor — which maps the live mouse position even over a floating
-window, so a pill parked over the schematic drops Gets roughly under
+window, so a dock parked over the schematic drops Gets roughly under
 itself.
 
 The **dot goes crimson** when the wireless graph has a problem — duplicate
-Set channels, Gets with no Set, or unwired Sets — and the pill's tooltip
-names the offenders. Otherwise it burns FORGE ember.
+Set channels, Gets with no Set, or unwired Sets — and the row's tooltip
+names the offenders. Otherwise it burns FORGE ember. Clicking the FORGE
+chip collapses the rail to the chip plus one status dot per section, so
+even a collapsed dock shows health.
 
-Drag the pill anywhere; its position and enabled state persist per user in
-`~/.forge_wireless_hud.json`, and an enabled HUD comes back by itself after
-a Flame restart (on the first right-click or setup load). The popup is
-rebuilt from the live graph on every click so it can never go stale; the
-label refreshes after every wireless action and on setup load — only a Set
-deleted *by hand* can leave the count stale until the next interaction.
-Crash-#16 rules from forge-takes apply: standard widgets only, no `QTimer`,
-and nothing in the HUD can raise into an action.
+Drag the dock anywhere (OS-native window drag); position, collapse and
+per-section enabled state persist in `~/.forge_hud.json` (the v1.5.0
+pill's `~/.forge_wireless_hud.json` enabled flag migrates in as the
+first-run default), and an enabled HUD comes back by itself after a Flame
+restart (on the first right-click or setup load). The popup is rebuilt
+from the live graph on every click so it can never go stale, and the row
+label refreshes on hover, after every wireless action, and on setup load —
+hand-deleting a Set stales the count only until the mouse next touches the
+dock. Crash-#16 rules from forge-takes apply: standard widgets only, no
+`QTimer`, and nothing in the HUD can raise into an action.
 
 ## Groups: what to know
 

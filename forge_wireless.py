@@ -56,18 +56,19 @@
 #   the four different selection requirements are visible instead of
 #   folklore.
 #
-# HUD (the channel palette)
-#   A tiny frameless always-on-top pill (same family as the forge-takes
-#   HUD): glanceable channel/get count, crimson dot when the graph has a
-#   wireless problem (duplicate channels, Gets with no Set, unwired Sets).
-#   Click it for a popup of every channel grouped under its feeding source,
-#   swatched in the channel colour -- clicking a channel drops a linked,
-#   tinted, hidden Get (next to the selected node if there is one,
-#   otherwise at the schematic cursor, i.e. where the pill is parked).
-#   The popup is rebuilt from the live graph on every click so it can
-#   never go stale; the pill label refreshes after every wireless action
-#   and on setup load. No QTimer, standard widgets only, and nothing in
-#   the HUD may ever raise into an action.
+# HUD (the channel palette, a section on the shared FORGE dock)
+#   This module registers a "wireless" section with forge_hud.py (the
+#   shared HUD rail all FORGE distros dock into): glanceable channel/get
+#   count, crimson dot when the graph has a wireless problem (duplicate
+#   channels, Gets with no Set, unwired Sets). Click the row for a popup
+#   of every channel grouped under its feeding source, swatched in the
+#   channel colour -- clicking a channel drops a linked, tinted, hidden
+#   Get (next to the selected node if there is one, otherwise at the
+#   schematic cursor). The popup is rebuilt from the live graph on every
+#   click so it can never go stale; the row label refreshes on hover,
+#   after every wireless action, and on setup load. forge_hud owns the
+#   window, drag, collapse and persistence; without forge_hud.py the menu
+#   still works and only the HUD is unavailable.
 #
 # Verified against Flame 2026.2 Python API (details in README):
 #   node.type reads "MUX"; hide_input / schematic_colour are real dynamic
@@ -93,7 +94,7 @@ import re
 
 import flame
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -1308,48 +1309,28 @@ def rename_channel_dialog(selection):
         _console("Renamed '{0}' -> '{1}' across {2} node(s).".format(old, new, count))
 
 
-# --- HUD (channel palette pill) --------------------------------------------
+# --- HUD (a section on the shared FORGE dock) ------------------------------
 #
-# Modelled on the forge-takes HUD (same host, stable): frameless draggable
-# pill, position persisted per user, QMenu popup on click. The takes pill is
-# a mode indicator (the current take is invisible state); this one is a
-# palette -- wireless has no mode, but with many channels the fastest path
-# to a Get matters, and "which channels exist" stops being glanceable.
-# The popup rebuilds from the live graph on every click (channels can change
-# behind our back: hand-deleted Sets, setup loads), so only the pill LABEL
-# can stale -- it refreshes after every action and on setup load.
+# v1.5.0 shipped a standalone pill; v1.6.0 moved it onto forge_hud -- the
+# shared dock every FORGE distro registers a section into (one frameless
+# window, one row per tool, a FORGE chip that collapses the rail to status
+# dots). forge_hud owns the window, drag, persistence, and hover-refresh;
+# this module supplies exactly two callbacks: refresh (the row label +
+# health) and menu (the channel palette popup, rebuilt live on every click
+# so it can never go stale). The takes HUD docks into the same rail.
 
-HUD_MENU_SS = (
-    "QMenu { background: #23262f; color: #ccc; border: 1px solid #3a3f4f; "
-    "  font-size: 12px; padding: 4px; }"
-    "QMenu::item { padding: 5px 24px 5px 8px; border-radius: 3px; }"
-    "QMenu::item:selected { background: #2d4f7a; }"
-    "QMenu::item:disabled { color: #888; }"      # source-node group headers
-    "QMenu::separator { height: 1px; background: #3a3f4f; margin: 4px 6px; }"
-)
-
-_HUD = None
 _HUD_BOOTED = False
-_HUD_STATE_PATH = os.path.join(os.path.expanduser("~"),
-                               ".forge_wireless_hud.json")
+_LEGACY_HUD_STATE = os.path.join(os.path.expanduser("~"),
+                                 ".forge_wireless_hud.json")
 
 
-def _hud_state():
+def _forge_hud():
+    """The shared dock library, or None where it isn't installed."""
     try:
-        with open(_HUD_STATE_PATH) as f:
-            return json.load(f)
+        import forge_hud
+        return forge_hud
     except Exception:
-        return {}
-
-
-def _save_hud_state(**changes):
-    try:
-        state = _hud_state()
-        state.update(changes)
-        with open(_HUD_STATE_PATH, "w") as f:
-            json.dump(state, f)
-    except Exception:
-        pass                      # a HUD must never break an action
+        return None
 
 
 def _hud_place_new_get(channel):
@@ -1384,118 +1365,9 @@ def _hud_action(fn, *args):
     update_hud()
 
 
-def _make_hud():
-    QtCore, QtGui, QtWidgets = _qt()
-
-    class Hud(QtWidgets.QWidget):
-        def __init__(self):
-            super().__init__(
-                None,
-                QtCore.Qt.FramelessWindowHint
-                | QtCore.Qt.WindowStaysOnTopHint
-                | QtCore.Qt.Tool,
-            )
-            self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
-            self.setCursor(QtCore.Qt.PointingHandCursor)
-            self._press = None
-            self._offset = None
-            self._moved = False
-            self.label = QtWidgets.QLabel("", self)
-            self.label.setTextFormat(QtCore.Qt.RichText)
-            self.label.setStyleSheet(
-                "color: #ddd; font-size: 13px; font-weight: bold; "
-                "background: transparent;")
-            lay = QtWidgets.QHBoxLayout(self)
-            lay.setContentsMargins(14, 7, 14, 8)
-            lay.addWidget(self.label)
-
-        def paintEvent(self, _event):
-            p = QtGui.QPainter(self)
-            p.setRenderHint(QtGui.QPainter.Antialiasing)
-            p.setBrush(QtGui.QColor(20, 22, 28, 235))
-            p.setPen(QtGui.QPen(QtGui.QColor(58, 63, 79), 1))
-            p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 9, 9)
-
-        def mousePressEvent(self, event):
-            if event.button() == QtCore.Qt.LeftButton:
-                self._press = event.globalPosition().toPoint()
-                self._offset = self._press - self.frameGeometry().topLeft()
-                self._moved = False
-
-        def mouseMoveEvent(self, event):
-            if self._press is None:
-                return
-            here = event.globalPosition().toPoint()
-            # A few pixels of slop separate "click" from "drag".
-            if not self._moved and (here - self._press).manhattanLength() < 5:
-                return
-            self._moved = True
-            self.move(here - self._offset)
-
-        def mouseReleaseEvent(self, _event):
-            if self._press is None:
-                return
-            self._press = None
-            if self._moved:
-                self._moved = False
-                _save_hud_state(x=self.x(), y=self.y())
-                return
-            self._dropdown()
-
-        def _dropdown(self):
-            """The channel palette, rebuilt live: channels grouped under
-            their feeding source, click one to drop a Get."""
-            try:
-                set_map = _muxes_by_channel(SET_PREFIX)
-                get_map = _gets_by_channel()
-            except Exception:
-                return
-            QtCore_, QtGui_, QtWidgets_ = _qt()
-            popup = QtWidgets_.QMenu(self)
-            popup.setStyleSheet(HUD_MENU_SS)
-
-            if not set_map:
-                none = popup.addAction("no channels yet — Make Set first")
-                none.setEnabled(False)
-            else:
-                groups = {}
-                for chan in set_map:
-                    src = _set_source_name(set_map[chan][0]) or "(unwired)"
-                    groups.setdefault(src, []).append(chan)
-                for src in sorted(groups, key=str.lower):
-                    hdr = popup.addAction(src)
-                    hdr.setEnabled(False)
-                    for chan in sorted(groups[src], key=str.lower):
-                        n_gets = len(get_map.get(chan, []))
-                        action = popup.addAction(
-                            "    {0}   ({1} get{2})".format(
-                                chan, n_gets, "" if n_gets == 1 else "s"))
-                        colour = _set_colour(set_map[chan][0])
-                        if colour:
-                            action.setIcon(_swatch_icon(QtGui_, colour))
-                        action.triggered.connect(
-                            lambda _checked=False, c=chan:
-                            _hud_action(_hud_place_new_get, c))
-                popup.addSeparator()
-                relink_act = popup.addAction("Relink all")
-                relink_act.triggered.connect(
-                    lambda: _hud_action(relink))
-            hide = popup.addAction("Hide HUD")
-            hide.triggered.connect(
-                lambda: (_save_hud_state(enabled=False), self.hide()))
-            popup.exec(self.mapToGlobal(self.rect().bottomLeft()))
-
-    return Hud()
-
-
-def update_hud():
-    """Refresh the pill label from the live graph; crimson dot + tooltip
-    when the wireless graph has a problem. Called after every action and on
-    setup load -- never from isEnabled predicates (those fire per
-    right-click and must stay cheap)."""
-    global _HUD
-    if _HUD is None or not _HUD.isVisible():
-        return
+def _hud_refresh():
+    """Row label + health for the dock: channel/get counts, crimson dot and
+    a tooltip naming the offenders when the graph has a wireless problem."""
     try:
         set_map = _muxes_by_channel(SET_PREFIX)
         get_map = _gets_by_channel()
@@ -1505,13 +1377,11 @@ def update_hud():
         unwired = sorted(c for c, ns in set_map.items()
                          if not _set_is_wired(ns[0]))
         bad = bool(dupes or orphans or unwired)
-        dot = '<span style="color: {0};">●</span>'.format(
-            "#C0392B" if bad else "#E87E24")
-        _HUD.label.setText(
-            '{0}&nbsp; wireless &nbsp;<span style="color: #777; '
-            'font-weight: normal;">{1} ch · {2} get{3}</span>'
-            '&nbsp;<span style="color: #666;">▾</span>'.format(
-                dot, len(set_map), n_gets, "" if n_gets == 1 else "s"))
+        dot = "#C0392B" if bad else "#E87E24"
+        html = ('<span style="color: {0};">●</span>&nbsp; wireless &nbsp;'
+                '<span style="color: #777; font-weight: normal;">'
+                '{1} ch · {2} get{3}</span>'.format(
+                    dot, len(set_map), n_gets, "" if n_gets == 1 else "s"))
         problems = []
         if dupes:
             problems.append("duplicate Set channels: " + ", ".join(dupes))
@@ -1519,29 +1389,79 @@ def update_hud():
             problems.append("Gets with no Set: " + ", ".join(orphans))
         if unwired:
             problems.append("unwired Sets: " + ", ".join(unwired))
-        _HUD.setToolTip("\n".join(problems))
-        _HUD.adjustSize()
+        return {"html": html, "tooltip": "\n".join(problems),
+                "alert": bad, "dot": dot}
     except Exception:
-        pass                      # a HUD must never break an action
+        return {"html": '<span style="color: #666;">wireless</span>'}
+
+
+def _hud_menu(popup, qt):
+    """The channel palette popup, rebuilt live: channels grouped under
+    their feeding source, click one to drop a Get."""
+    QtCore_, QtGui_, QtWidgets_ = qt
+    set_map = _muxes_by_channel(SET_PREFIX)
+    get_map = _gets_by_channel()
+    if not set_map:
+        none = popup.addAction("no channels yet — Make Set first")
+        none.setEnabled(False)
+        return
+    groups = {}
+    for chan in set_map:
+        src = _set_source_name(set_map[chan][0]) or "(unwired)"
+        groups.setdefault(src, []).append(chan)
+    for src in sorted(groups, key=str.lower):
+        hdr = popup.addAction(src)
+        hdr.setEnabled(False)
+        for chan in sorted(groups[src], key=str.lower):
+            n_gets = len(get_map.get(chan, []))
+            action = popup.addAction(
+                "    {0}   ({1} get{2})".format(
+                    chan, n_gets, "" if n_gets == 1 else "s"))
+            colour = _set_colour(set_map[chan][0])
+            if colour:
+                action.setIcon(_swatch_icon(QtGui_, colour))
+            action.triggered.connect(
+                lambda _checked=False, c=chan:
+                _hud_action(_hud_place_new_get, c))
+    popup.addSeparator()
+    relink_act = popup.addAction("Relink all")
+    relink_act.triggered.connect(lambda: _hud_action(relink))
+
+
+def _register_hud():
+    """Register the wireless section with the shared dock. Runs at import
+    (and so again on every rescan -- register replaces by id). The v1.5.0
+    standalone pill's enabled state migrates in as the first-run default."""
+    hud = _forge_hud()
+    if hud is None:
+        return
+    try:
+        with open(_LEGACY_HUD_STATE) as f:
+            legacy = json.load(f)
+    except Exception:
+        legacy = {}
+    hud.register("wireless", title="Wireless",
+                 refresh=_hud_refresh, menu=_hud_menu,
+                 default_enabled=bool(legacy.get("enabled")))
+
+
+def update_hud():
+    """Action checkpoint: refresh the dock row (cheap no-op when hidden)."""
+    hud = _forge_hud()
+    if hud is not None:
+        hud.update()
 
 
 def ensure_hud():
-    """Show the HUD if the user has it enabled; restore its position."""
-    global _HUD
-    if not _hud_state().get("enabled"):
-        return
-    if _HUD is None:
-        _HUD = _make_hud()
-        state = _hud_state()
-        _HUD.move(int(state.get("x", 80)), int(state.get("y", 80)))
-    if not _HUD.isVisible():
-        _HUD.show()
-    update_hud()
+    """Show the dock if the user has any section enabled."""
+    hud = _forge_hud()
+    if hud is not None:
+        hud.ensure()
 
 
 def _ensure_hud_once():
     """First-popup lazy boot: bring an enabled HUD back after Flame restart
-    without a file read on every subsequent right-click."""
+    without dock work on every subsequent right-click."""
     global _HUD_BOOTED
     if _HUD_BOOTED:
         return
@@ -1553,17 +1473,19 @@ def _ensure_hud_once():
 
 
 def toggle_hud(selection=None):
-    """Menu action: flip the HUD."""
-    global _HUD
-    if _HUD is not None and _HUD.isVisible():
-        _save_hud_state(enabled=False)
-        _HUD.hide()
-        _console("HUD hidden.")
+    """Menu action: flip the wireless section of the shared dock."""
+    hud = _forge_hud()
+    if hud is None:
+        _console("The HUD needs forge_hud.py installed beside this file.")
         return
-    _save_hud_state(enabled=True)
-    ensure_hud()
-    _console("HUD shown — click the pill for the channel palette; "
-             "click a channel to drop a Get. Drag to park it.")
+    if hud.toggle("wireless"):
+        _console("HUD shown — click the wireless row for the channel "
+                 "palette; drag to park it; click FORGE to collapse.")
+    else:
+        _console("HUD hidden.")
+
+
+_register_hud()
 
 
 # --- Flame hooks -----------------------------------------------------------
