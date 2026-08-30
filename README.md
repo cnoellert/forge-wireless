@@ -181,7 +181,10 @@ popup, grouped under its feeding source node and swatched in its channel
 colour, each with its get-count — **click a channel to drop a linked,
 tinted, hidden Get**. With many channels this turns the most frequent
 action (right-click → FORGE → Wireless → Make Get… → picker → OK) into two
-clicks. The popup also carries *Relink all* and *Hide Wireless HUD*.
+clicks. The popup also carries *Make Set from selection…* (greyed without a
+usable source selected — on an empty batch it replaces the "no channels"
+dead end, so the palette can start channels as well as consume them),
+*Relink all*, and *Hide Wireless HUD*.
 
 Placement of a HUD-dropped Get: next to the **selected node** if there is
 one (the deliberate signal of where you're working), otherwise at the

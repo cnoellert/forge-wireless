@@ -94,7 +94,7 @@ import re
 
 import flame
 
-__version__ = "1.6.3"
+__version__ = "1.7.0"
 
 # --- configuration ---------------------------------------------------------
 
@@ -1431,30 +1431,39 @@ def _hud_menu(popup, qt):
     set_map = _muxes_by_channel(SET_PREFIX)
     get_map = _gets_by_channel()
     if not set_map:
-        none = popup.addAction("no channels yet — Make Set first")
+        none = popup.addAction("no channels yet")
         none.setEnabled(False)
-        return
-    groups = {}
-    for chan in set_map:
-        src = _set_source_name(set_map[chan][0]) or "(unwired)"
-        groups.setdefault(src, []).append(chan)
-    for src in sorted(groups, key=str.lower):
-        hdr = popup.addAction(src)
-        hdr.setEnabled(False)
-        for chan in sorted(groups[src], key=str.lower):
-            n_gets = len(get_map.get(chan, []))
-            action = popup.addAction(
-                "    {0}   ({1} get{2})".format(
-                    chan, n_gets, "" if n_gets == 1 else "s"))
-            colour = _set_colour(set_map[chan][0])
-            if colour:
-                action.setIcon(_swatch_icon(QtGui_, colour))
-            action.triggered.connect(
-                lambda _checked=False, c=chan:
-                _hud_action(_hud_place_new_get, c))
+    else:
+        groups = {}
+        for chan in set_map:
+            src = _set_source_name(set_map[chan][0]) or "(unwired)"
+            groups.setdefault(src, []).append(chan)
+        for src in sorted(groups, key=str.lower):
+            hdr = popup.addAction(src)
+            hdr.setEnabled(False)
+            for chan in sorted(groups[src], key=str.lower):
+                n_gets = len(get_map.get(chan, []))
+                action = popup.addAction(
+                    "    {0}   ({1} get{2})".format(
+                        chan, n_gets, "" if n_gets == 1 else "s"))
+                colour = _set_colour(set_map[chan][0])
+                if colour:
+                    action.setIcon(_swatch_icon(QtGui_, colour))
+                action.triggered.connect(
+                    lambda _checked=False, c=chan:
+                    _hud_action(_hud_place_new_get, c))
     popup.addSeparator()
-    relink_act = popup.addAction("Relink all")
-    relink_act.triggered.connect(lambda: _hud_action(relink))
+    # the palette can start channels too, not just consume them -- and on
+    # an empty batch this replaces the dead-end "Make Set first" hint with
+    # the action itself. Selection is captured at popup-build time.
+    sel = [n for n in flame.batch.nodes if _val(n.selected)]
+    mk = popup.addAction("Make Set from selection…")
+    mk.setEnabled(any(not _is_wireless_node(n) for n in sel))
+    mk.triggered.connect(
+        lambda _checked=False, s=sel: _hud_action(make_set_dialog, s))
+    if set_map:
+        relink_act = popup.addAction("Relink all")
+        relink_act.triggered.connect(lambda: _hud_action(relink))
 
 
 def _register_hud():
