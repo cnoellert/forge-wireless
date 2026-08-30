@@ -51,9 +51,10 @@ right-click in the Batch schematic.
 For the [Wireless HUD](#wireless-hud), also drop `forge_hud.py` (from the
 [forge-hud](https://github.com/cnoellert/forge-hud) repo) into the same
 hooks path — a single file, no other dependencies. It is **optional**:
-without it the HUD toggle reports the missing file and every other feature
-works. Never keep an older `forge_hud.py` over a newer one; other FORGE
-tools (forge-takes) share the same copy.
+without it the *Wireless HUD* menu entry simply doesn't appear (a menu
+item must not advertise a feature that isn't installed) and every other
+feature works. Never keep an older `forge_hud.py` over a newer one; other
+FORGE tools (forge-takes) share the same copy.
 
 ## Menu
 
@@ -68,7 +69,7 @@ the HUD toggle:
 | Switch Get to channel… | the Get node(s) to re-point |
 | Rename channel… | any `SET_`/`GET…_` node of the channel |
 | Relink all | nothing |
-| Wireless HUD | nothing |
+| Wireless HUD | nothing — appears only when `forge_hud.py` is installed |
 
 `Make`/`Switch` × `Set`/`Get` is the entire vocabulary. Switch Set and Switch
 Get share a verb because they are the same operation on opposite ends of the

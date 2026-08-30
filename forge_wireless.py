@@ -50,11 +50,12 @@
 #     channel (GET_bg -> GET2_fg) and re-tints from the new Set's colour.
 #
 # Menu
-#   Seven actions -- three pairs plus the HUD toggle: create (Make Set/Get),
-#   re-point (Switch Set/Get), maintain (Rename channel, Relink all,
-#   Wireless HUD). isEnabled greys what the current selection can't run, so
-#   the four different selection requirements are visible instead of
-#   folklore.
+#   Three pairs -- create (Make Set/Get), re-point (Switch Set/Get),
+#   maintain (Rename channel, Relink all) -- plus a Wireless HUD toggle
+#   that appears only when forge_hud.py is installed (a menu item must not
+#   advertise a feature that isn't there). isEnabled greys what the current
+#   selection can't run, so the four different selection requirements are
+#   visible instead of folklore.
 #
 # HUD (the channel palette, a section on the shared FORGE dock)
 #   This module registers a "wireless" section with forge_hud.py (the
@@ -94,7 +95,7 @@ import re
 
 import flame
 
-__version__ = "1.7.0"
+__version__ = "1.7.1"
 
 # --- configuration ---------------------------------------------------------
 
@@ -1578,7 +1579,8 @@ def _sel_has_channel_node(selection):
     return any(_is_wireless_node(n) for n in selection)
 
 def get_batch_custom_ui_actions():
-    """Seven actions: three pairs (create, re-point, maintain) + the HUD.
+    """Three pairs (create, re-point, maintain) + the HUD toggle when
+    forge_hud.py is installed.
 
     'Make/Switch' + 'Set/Get' is the whole vocabulary -- Switch Set and
     Switch Get are the same operation on opposite ends of the wire, so they
@@ -1587,32 +1589,33 @@ def get_batch_custom_ui_actions():
     four different selection requirements discoverable instead of folklore.
     """
     _ensure_hud_once()      # bring an enabled HUD back after Flame restart
+    actions = [
+        {"name": "Make Set from selection...",
+         "execute": _safe(make_set_dialog),
+         "isEnabled": _pred(_sel_has_source)},
+        {"name": "Make Get...",
+         "execute": _safe(make_get_dialog)},
+        {"name": "Switch Set to selection...",
+         "execute": _safe(switch_set_dialog),
+         "isEnabled": _pred(_sel_has_source)},
+        {"name": "Switch Get to channel...",
+         "execute": _safe(switch_get_dialog),
+         "isEnabled": _pred(_sel_has_get)},
+        {"name": "Rename channel...",
+         "execute": _safe(rename_channel_dialog),
+         "isEnabled": _pred(_sel_has_channel_node)},
+        {"name": "Relink all",
+         "execute": _safe(relink)},
+    ]
+    # a menu item must not advertise a feature that isn't installed:
+    # without forge_hud.py (or with an incompatible major) there is no
+    # HUD toggle at all. Cheap per popup -- sys.modules caches the import.
+    if _forge_hud() is not None:
+        actions.append({"name": "Wireless HUD",
+                        "execute": _safe(toggle_hud)})
     return [
         {"name": "FORGE", "hierarchy": [], "actions": []},
-        {
-            "name": "Wireless",
-            "hierarchy": ["FORGE"],
-            "actions": [
-                {"name": "Make Set from selection...",
-                 "execute": _safe(make_set_dialog),
-                 "isEnabled": _pred(_sel_has_source)},
-                {"name": "Make Get...",
-                 "execute": _safe(make_get_dialog)},
-                {"name": "Switch Set to selection...",
-                 "execute": _safe(switch_set_dialog),
-                 "isEnabled": _pred(_sel_has_source)},
-                {"name": "Switch Get to channel...",
-                 "execute": _safe(switch_get_dialog),
-                 "isEnabled": _pred(_sel_has_get)},
-                {"name": "Rename channel...",
-                 "execute": _safe(rename_channel_dialog),
-                 "isEnabled": _pred(_sel_has_channel_node)},
-                {"name": "Relink all",
-                 "execute": _safe(relink)},
-                {"name": "Wireless HUD",
-                 "execute": _safe(toggle_hud)},
-            ],
-        },
+        {"name": "Wireless", "hierarchy": ["FORGE"], "actions": actions},
     ]
 
 def batch_setup_loaded(info):
